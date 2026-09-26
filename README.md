@@ -1,4 +1,6 @@
 # Turret vision
+We begin with the computer vision aspect of the project. This pipeline is designed to take in images from the camera as .jpg files, and interpolate it through an agent that recognizes objects, and also take in user inquiries as data. The output is data in spherical coordinates, along with other metadata that would allow the UI and pointer elements of the project to find the object given my data.
+
 
 Python module for a HackGT tabletop laser turret. A camera scans in angle-tagged steps. This package turns those pictures into a spherical direction: azimuth, elevation, a bounding box, and metadata. A teammate owns the UI and the laser loop. There is no web framework.
 
