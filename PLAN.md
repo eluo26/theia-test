@@ -1,17 +1,26 @@
 # Vision module plan
 
-Python package for a HackGT laser-pointing turret. Grok (xAI, OpenAI-compatible base URL `https://api.x.ai/v1`) does scene understanding, and a local open-vocabulary detector tightens boxes in a later milestone. No web framework. The command line is `python -m vision.cli`.
+Python package for a HackGT laser-pointing turret. The configured vision provider does scene understanding, and a local open-vocabulary detector tightens boxes. No web framework. The command line is `python -m vision.cli`.
 
 This file is the spec for milestones M1–M6. M1 through M6 are implemented. The operator guide is README.md. The geometry below is the full pinhole rotation in `vision/geometry.py`, not a small-angle fraction of the FOV.
 
-Model ids live only in `config.yaml`. Chosen from the xAI docs on 2026-09-26:
+`provider` in `config.yaml` is `openai` by default. Model ids live only in that file.
 
-- `grok_fast_model`: `grok-4.3` ([docs](https://docs.x.ai/developers/models/grok-4.3)). Image input and structured outputs. This is the fast model. Older grok-4-fast aliases resolve to it.
-- `grok_reasoning_model`: `grok-4.7` ([docs](https://docs.x.ai/developers/models/grok-4.7)). Image input, structured outputs, reasoning default high.
+OpenAI ids were copied from the docs on 2026-09-26 ([catalog](https://developers.openai.com/api/docs/models)):
+
+- `openai_fast_model`: `gpt-6-luna` ([docs](https://developers.openai.com/api/docs/models/gpt-6-luna)). Image input, structured outputs, Chat Completions. High-volume model used for indexing.
+- `openai_reasoning_model`: `gpt-6-astra` ([docs](https://developers.openai.com/api/docs/models/gpt-6-astra)). Image input, structured outputs, Chat Completions. Flagship reasoning model used for the text query.
+- Base URL `https://api.openai.com/v1`. Key env `OPENAI_API_KEY`.
+
+Set `provider: xai` to use the Grok settings without a code change:
+
+- `grok_fast_model`: `grok-4.3` ([docs](https://docs.x.ai/developers/models/grok-4.3)).
+- `grok_reasoning_model`: `grok-4.7` ([docs](https://docs.x.ai/developers/models/grok-4.7)).
+- Base URL `https://api.x.ai/v1`. Key env `XAI_API_KEY`.
 
 If a call fails, update those names from the docs. Do not invent a replacement id in Python.
 
-The vision call uses the OpenAI SDK: `client.beta.chat.completions.parse` with `response_format` set to the Pydantic model, and `image_url.detail` taken from `config.yaml` (`auto`, `low`, or `high`). Images are jpg, jpeg, or png, at most `max_image_bytes` (20 MiB).
+The vision call uses the OpenAI SDK: `client.chat.completions.parse` with `response_format` set to the Pydantic model, and `image_url` detail taken from `config.yaml` (`auto`, `low`, `high`, or `original`). https://developers.openai.com/api/docs/guides/structured-outputs and https://platform.openai.com/docs/guides/images-vision . Image input allows PNG, JPEG, WEBP, and non-animated GIF. A local cap is `max_image_bytes`.
 
 ## Coordinate convention
 
@@ -78,10 +87,10 @@ Internal models already defined for later milestones, so the contract does not d
 
 ## Secrets
 
-- `XAI_API_KEY` is read only from the environment. A repo-root `.env` is loaded when it exists (`override` is false, so a real environment variable wins).
-- Missing key, empty key, or the placeholder `your-key-here` raises a clear error that points at https://console.x.ai and tells the operator to copy `.env.example` to `.env`.
-- Commit `.env.example` with `XAI_API_KEY=your-key-here`. Gitignore `.env`, `.env.*` (except the example), `data/cache/`, `data/out/`, video files, virtualenvs, Python caches, and model-weight files.
-- `.githooks/pre-commit` blocks staged env files other than `.env.example`, and blocks added lines that contain an `xai-` token of 10 or more alphanumeric characters. Install with `git config core.hooksPath .githooks`.
+- The active provider's key (`OPENAI_API_KEY` or `XAI_API_KEY`) is read only from the environment. A repo-root `.env` is loaded when it exists (`override` is false, so a real environment variable wins).
+- Missing key, empty key, or the placeholder `your-key-here` raises a clear error that points at the provider's key page and tells the operator to copy `.env.example` to `.env`.
+- Commit `.env.example` with `OPENAI_API_KEY=your-key-here` and a commented `XAI_API_KEY=your-key-here`. Gitignore `.env`, `.env.*` (except the example), `data/cache/`, `data/out/`, video files, virtualenvs, Python caches, and model-weight files.
+- `.githooks/pre-commit` blocks staged env files other than `.env.example`, and blocks added lines that contain an `xai-` token or an `sk-` token. Install with `git config core.hooksPath .githooks`.
 - Logs and exceptions pass through a redactor. `check-config` prints `present` or `missing`, never the key.
 
 ## Cache, retries, logging
@@ -101,10 +110,10 @@ Implemented.
 - `config.yaml` loaded by Pydantic. Unknown keys and invalid values fail with the field name. Model ids have no defaults in Python.
 - `.env` loading, `.gitignore`, `.env.example`, and the pre-commit hook.
 - `python -m vision.cli check-config` and `python -m vision.cli describe <image>`.
-- One image, one call to `grok_fast_model`, response validated as `IndexResponse`.
+- One image, one call to the configured fast model, response validated as `IndexResponse`.
 - Annotated debug image: green box and label per object, legend "Grok".
 - Tests mock the client. No live call in M1, because the key is not available in this environment.
-- Synthetic scene: `data/test_scenes/m1/scene.png`.
+- No synthetic scene photos are stored in the repo. Geometry and schema tests use in-memory numbers.
 
 ### M2 — Ingest
 
@@ -119,7 +128,7 @@ Implemented in `vision/ingest.py`. Video uses `--sweep` or a `timestamp_s,pan,ti
 Implemented. `tile_grid` is `[columns, rows]`. Tile failures are logged and skipped.
 
 - Split each frame into `tile_grid` (`[nx, ny]`, columns then rows) with `tile_overlap` (fraction of the tile shared with its neighbor).
-- Call `grok_fast_model` on each tile, at most `max_concurrency` calls at once. Same prompt and schema as M1.
+- Call the configured fast model on each tile, at most `max_concurrency` calls at once. Same prompt and schema as M1.
 - Map each tile's 0–1000 box back to full-frame `bbox_px`.
 - Use the M1 cache. Skip a tile after validation retries fail, and continue with the rest of the frame.
 
@@ -142,15 +151,15 @@ Implemented.
 
 ### M6 — Query
 
-Implemented. `locate(query, catalog)` sends catalog text (id, label, description, count, drug name) to `grok_reasoning_model`, then crops the chosen frame with `crop_pad`, asks for a tight box, and runs the detector on the crop. The tighter agreeing box is mapped back and azimuth/elevation are recomputed.
+Implemented. `locate(query, catalog)` sends catalog text (id, label, description, count, drug name) to the configured reasoning model, then crops the chosen frame with `crop_pad`, asks for a tight box, and runs the detector on the crop. The tighter agreeing box is mapped back and azimuth/elevation are recomputed.
 
 - `found` when one object wins. `ambiguous` with `candidates` when more than one is plausible. `not_found` with a `reason` when nothing matches.
 - `range_m` remains null. `python -m vision.cli ask` prints the JSON. `python -m vision.cli eval` reports correct-object rate and mean angular error. Still no web framework.
 
 ## [HUMAN]
 
-- Create an API key at https://console.x.ai. It may be shown only once.
-- Store it in `.env` as `XAI_API_KEY`. Never commit `.env`. Confirm `git status` before committing. If a key leaks, revoke it and create a new one.
-- Confirm `grok_fast_model` and `grok_reasoning_model` in `config.yaml` against the docs before the demo.
+- Create an OpenAI API key at https://platform.openai.com/api-keys. It may be shown only once.
+- Store it in `.env` as `OPENAI_API_KEY`. Never commit `.env`. Confirm `git status` before committing. If a key leaks, revoke it and create a new one.
+- Confirm `openai_fast_model` and `openai_reasoning_model` in `config.yaml` against the docs before the demo. To use xAI later, set `provider: xai` and `XAI_API_KEY`.
 - Measure the camera field of view, width, and height later, and replace the placeholders. Add intrinsics if the lens needs them.
-- Shoot real angle-tagged test scenes later. `data/test_scenes/m1/scene.png` is a synthetic stand-in, not a turret photo.
+- Shoot real angle-tagged photos into `data/test_scenes/<scene>/`. This repo does not include synthetic stand-in images.

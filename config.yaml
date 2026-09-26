@@ -1,34 +1,48 @@
 # Vision module configuration.
-# Model ids were read from the xAI docs on 2026-09-26. Confirm them before the demo.
+# provider selects the API. Switching back to xAI is a config change.
+# Model ids are read from here only. If a call fails, fix these values from the
+# docs. Do not invent a replacement id in code.
+
+provider: openai
+
+# OpenAI model ids read on 2026-09-26.
+# https://developers.openai.com/api/docs/models
+# gpt-6-luna: image input, structured outputs, Chat Completions. Efficient model
+# for high-volume work. https://developers.openai.com/api/docs/models/gpt-6-luna
+# gpt-6-astra: image input, structured outputs, Chat Completions. Flagship
+# reasoning model. https://developers.openai.com/api/docs/models/gpt-6-astra
+# Structured outputs: client.chat.completions.parse(..., response_format=Model)
+# https://developers.openai.com/api/docs/guides/structured-outputs
+# Image input uses image_url with a data URL.
+# File types: PNG, JPEG, WEBP, and non-animated GIF.
+# Detail values: low, high, original, auto. The sizing table lists all four for
+# gpt-6-astra. https://platform.openai.com/docs/guides/images-vision
+openai_base_url: https://api.openai.com/v1
+openai_api_key_env: OPENAI_API_KEY
+openai_fast_model: gpt-6-luna
+openai_reasoning_model: gpt-6-astra
+
+# xAI, used when provider is xai. Ids read from the xAI docs on 2026-09-26.
 # https://docs.x.ai/developers/models
 # https://docs.x.ai/developers/models/grok-4.3
 # https://docs.x.ai/developers/models/grok-4.7
-# If a call fails, fix these values from the docs. Do not invent a replacement id in code.
-
-# grok-4.3: text and image input, structured outputs. The docs describe it as the
-# fast model, and the older grok-4-fast aliases resolve to it.
 grok_fast_model: grok-4.3
-
-# grok-4.7: text and image input, structured outputs, reasoning default "high".
 grok_reasoning_model: grok-4.7
-
-# OpenAI-compatible base URL from the xAI docs.
 xai_base_url: https://api.x.ai/v1
+xai_api_key_env: XAI_API_KEY
 
-# Chat Completions image detail. Documented values: auto, low, high.
-# https://docs.x.ai/developers/model-capabilities/legacy/chat-completions
+# Chat Completions image detail. OpenAI documents auto, low, high, and original.
+# https://platform.openai.com/docs/guides/images-vision
 image_detail: high
 
-# Client timeout in seconds. The chat completions examples use a long timeout
-# because reasoning models can think for a while.
-# https://docs.x.ai/developers/model-capabilities/legacy/chat-completions
+# Client timeout in seconds. Reasoning models can take a while.
 request_timeout_s: 3600
 
-# Documented image input limit: 20MiB. jpg, jpeg, and png only.
+# Local cap on one image. OpenAI documents a 512 MB total request payload.
+# https://platform.openai.com/docs/guides/images-vision
 max_image_bytes: 20971520
 
 # Camera. Replace width, height, and FOV after you measure the real lens.
-# These placeholders are not used until geometry lands in a later milestone.
 # Optional fx, fy, cx, cy and dist_coeffs override the FOV when set.
 image_width: 4032
 image_height: 3024
@@ -40,7 +54,6 @@ cx: null
 cy: null
 dist_coeffs: null
 
-# Used by later milestones. Loaded now so the config file matches the plan.
 tile_grid: [2, 2]
 tile_overlap: 0.15
 max_concurrency: 4
@@ -52,7 +65,7 @@ blur_threshold: 100
 crop_pad: 0.15
 clinic_mode: false
 
-# Local open-vocabulary detector. Swappable. Weights download on first use (later milestone).
+# Local open-vocabulary detector. Swappable. Weights download on first use.
 detector: owlv2
 owlv2_model: google/owlv2-base-patch16-ensemble
 grounding_dino_model: IDEA-Research/grounding-dino-tiny
@@ -60,7 +73,7 @@ grounding_dino_model: IDEA-Research/grounding-dino-tiny
 cache_dir: data/cache
 out_dir: data/out
 
-# Client retry policy. These are not xAI API parameters.
+# Client retry policy. These are not API parameters.
 # Transport retries cover connection failures, timeouts, and HTTP 408/429/5xx.
 # HTTP 400 and 401 are not retried. Validation retries cover schema mismatches.
 max_transport_retries: 3

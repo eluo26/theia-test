@@ -164,7 +164,7 @@ def _index_tile(tile: Tile, settings, client_factory, detector, use_cache: bool)
         settings,
         prompt=grok_client.INDEX_PROMPT,
         response_model=IndexResponse,
-        model=settings.grok_fast_model,
+        model=settings.fast_model,
         client_factory=client_factory,
         use_cache=use_cache,
     )

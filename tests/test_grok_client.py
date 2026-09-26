@@ -42,15 +42,15 @@ class _FakeCompletions:
 
 def _client_factory(completions):
     def factory(**kwargs):
-        beta = SimpleNamespace(chat=SimpleNamespace(completions=completions))
-        return SimpleNamespace(beta=beta, kwargs=kwargs)
+        chat = SimpleNamespace(completions=completions)
+        return SimpleNamespace(chat=chat, kwargs=kwargs)
 
     return factory
 
 
 def _api_key() -> str:
-    # Split so a contiguous xai- token is not staged. The pre-commit hook blocks those.
-    return "xai-" + "testkeyvalue123456"
+    # Split so a contiguous sk- token is not staged. The pre-commit hook blocks those.
+    return "sk-" + "test" + "notalivekeyvalue123456"
 
 
 def _ok_response():
@@ -71,7 +71,7 @@ def _ok_response():
 
 
 def test_describe_uses_the_model_from_config(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     completions = _FakeCompletions([_completion(_ok_response())])
     result, cache_state = describe_image(
@@ -82,14 +82,15 @@ def test_describe_uses_the_model_from_config(tmp_path, monkeypatch):
     )
     assert cache_state == "miss"
     assert result.objects[0].label == "blue bottle"
-    assert completions.calls[0]["model"] == settings.grok_fast_model
+    assert completions.calls[0]["model"] == settings.fast_model
+    assert completions.calls[0]["model"] == settings.openai_fast_model
     assert completions.calls[0]["response_format"] is IndexResponse
     sent = completions.calls[0]["messages"][0]["content"][0]["image_url"]["detail"]
     assert sent == settings.image_detail
 
 
 def test_second_call_is_a_cache_hit(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     completions = _FakeCompletions([_completion(_ok_response())])
     image = _image(tmp_path)
@@ -104,7 +105,7 @@ def test_second_call_is_a_cache_hit(tmp_path, monkeypatch):
 
 
 def test_invalid_json_is_retried_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     settings = _settings(tmp_path).model_copy(update={"validation_retries": 1})
     completions = _FakeCompletions(
         [
@@ -124,7 +125,7 @@ def test_invalid_json_is_retried_once(tmp_path, monkeypatch):
 
 
 def test_repeated_invalid_json_skips_the_image(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     settings = _settings(tmp_path).model_copy(update={"validation_retries": 1})
     completions = _FakeCompletions(
         [
@@ -142,13 +143,13 @@ def test_repeated_invalid_json_skips_the_image(tmp_path, monkeypatch):
 
 
 def test_http_400_is_not_retried_and_points_at_the_docs(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     error = RuntimeError("bad request involving " + _api_key())
     error.status_code = 400
     completions = _FakeCompletions([error, _completion(_ok_response())])
     sleeps = []
-    with pytest.raises(GrokCallError, match="docs.x.ai") as caught:
+    with pytest.raises(GrokCallError, match="developers.openai.com") as caught:
         describe_image(
             _image(tmp_path),
             settings,
@@ -162,7 +163,7 @@ def test_http_400_is_not_retried_and_points_at_the_docs(tmp_path, monkeypatch):
 
 
 def test_rate_limit_uses_backoff_then_succeeds(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     settings = _settings(tmp_path).model_copy(update={"retry_base_delay_s": 0.5})
     limited = RuntimeError("slow down")
     limited.status_code = 429
@@ -180,10 +181,27 @@ def test_rate_limit_uses_backoff_then_succeeds(tmp_path, monkeypatch):
 
 def test_unsupported_image_type(tmp_path):
     settings = _settings(tmp_path)
-    image = tmp_path / "frame.webp"
-    image.write_bytes(b"webp")
-    with pytest.raises(GrokCallError, match="jpg"):
+    image = tmp_path / "frame.bmp"
+    image.write_bytes(b"bmp")
+    with pytest.raises(GrokCallError, match="Unsupported image type"):
         describe_image(image, settings, client_factory=_client_factory(_FakeCompletions([])))
+
+
+def test_webp_suffix_is_accepted(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    settings = _settings(tmp_path)
+    image = tmp_path / "frame.webp"
+    image.write_bytes(b"RIFFxxxxWEBP")
+    completions = _FakeCompletions([_completion(_ok_response())])
+    result, _cache = describe_image(
+        image,
+        settings,
+        client_factory=_client_factory(completions),
+        sleeper=lambda _delay: None,
+    )
+    sent = completions.calls[0]["messages"][0]["content"][0]["image_url"]["url"]
+    assert sent.startswith("data:image/webp;base64,")
+    assert result.objects[0].label == "blue bottle"
 
 
 def test_cache_key_changes_with_model_and_image():
@@ -202,15 +220,25 @@ def test_cache_key_changes_with_model_and_image():
 def test_redact_removes_key_material():
     leaked = "xai-" + "secretvalue12"
     assert "secretvalue" not in redact(f"token {leaked} in the log")
+    openai_leaked = "sk-" + ("b" * 24)
+    assert openai_leaked not in redact(f"token {openai_leaked} in the log")
+    header = "Authorization: Bearer " + openai_leaked
+    cleaned = redact(header)
+    assert openai_leaked not in cleaned
+    assert "Bearer [REDACTED]" in cleaned
 
 
 def test_client_source_does_not_hardcode_a_model_id():
     source = Path("vision/grok_client.py").read_text(encoding="utf-8")
+    config_source = Path("vision/config.py").read_text(encoding="utf-8")
     assert "grok-" not in source
+    assert "gpt-" not in source
+    assert "grok-" not in config_source
+    assert "gpt-" not in config_source
 
 
 def test_cached_file_is_json(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     completions = _FakeCompletions([_completion(_ok_response())])
     describe_image(
@@ -222,5 +250,5 @@ def test_cached_file_is_json(tmp_path, monkeypatch):
     files = list((tmp_path / "cache").glob("*.json"))
     assert len(files) == 1
     payload = json.loads(files[0].read_text(encoding="utf-8"))
-    assert payload["model"] == settings.grok_fast_model
+    assert payload["model"] == settings.fast_model
     assert "xai-" not in files[0].read_text(encoding="utf-8")

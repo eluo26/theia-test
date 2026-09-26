@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLACEHOLDER_API_KEY = "your-key-here"
+ProviderName = Literal["openai", "xai"]
 
 
 class ConfigError(RuntimeError):
@@ -19,7 +20,7 @@ class ConfigError(RuntimeError):
 
 
 class MissingAPIKeyError(ConfigError):
-    """XAI_API_KEY is unset or still the placeholder from .env.example."""
+    """The active provider's API key is unset or still the example placeholder."""
 
 
 class Settings(BaseModel):
@@ -27,10 +28,19 @@ class Settings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    provider: ProviderName
+
+    openai_base_url: str = Field(min_length=1)
+    openai_api_key_env: str = Field(min_length=1)
+    openai_fast_model: str = Field(min_length=1)
+    openai_reasoning_model: str = Field(min_length=1)
+
     grok_fast_model: str = Field(min_length=1)
     grok_reasoning_model: str = Field(min_length=1)
     xai_base_url: str = Field(min_length=1)
-    image_detail: Literal["auto", "low", "high"]
+    xai_api_key_env: str = Field(min_length=1)
+
+    image_detail: Literal["auto", "low", "high", "original"]
     request_timeout_s: float = Field(gt=0)
     max_image_bytes: int = Field(gt=0)
 
@@ -80,6 +90,50 @@ class Settings(BaseModel):
     def out_path(self) -> Path:
         return self.resolve_path(self.out_dir)
 
+    @property
+    def fast_model(self) -> str:
+        if self.provider == "openai":
+            return self.openai_fast_model
+        return self.grok_fast_model
+
+    @property
+    def reasoning_model(self) -> str:
+        if self.provider == "openai":
+            return self.openai_reasoning_model
+        return self.grok_reasoning_model
+
+    @property
+    def base_url(self) -> str:
+        if self.provider == "openai":
+            return self.openai_base_url
+        return self.xai_base_url
+
+    @property
+    def api_key_env(self) -> str:
+        if self.provider == "openai":
+            return self.openai_api_key_env
+        return self.xai_api_key_env
+
+    @property
+    def key_help_url(self) -> str:
+        if self.provider == "openai":
+            return "https://platform.openai.com/api-keys"
+        return "https://console.x.ai"
+
+    @property
+    def docs_urls(self) -> tuple[str, ...]:
+        if self.provider == "openai":
+            return (
+                "https://developers.openai.com/api/docs/models",
+                "https://developers.openai.com/api/docs/guides/structured-outputs",
+                "https://platform.openai.com/docs/guides/images-vision",
+            )
+        return (
+            "https://docs.x.ai/developers/models",
+            "https://docs.x.ai/developers/model-capabilities/text/structured-outputs",
+            "https://docs.x.ai/developers/model-capabilities/legacy/chat-completions",
+        )
+
 
 def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> Settings:
     """Load settings from config.yaml. A .env file is read when it exists."""
@@ -102,19 +156,24 @@ def load_settings(config_path: Path | None = None, *, load_env: bool = True) -> 
         raise ConfigError(f"Invalid config file {path}:\n{exc}") from exc
 
 
-def api_key_is_present() -> bool:
-    """True when XAI_API_KEY is set to something other than the example placeholder."""
-    key = os.environ.get("XAI_API_KEY", "").strip()
+def api_key_is_present(settings: Settings | None = None) -> bool:
+    """True when the active provider's key is set and is not the example placeholder."""
+    if settings is None:
+        settings = load_settings(load_env=False)
+    key = os.environ.get(settings.api_key_env, "").strip()
     return bool(key) and key != PLACEHOLDER_API_KEY
 
 
-def require_api_key() -> str:
-    """Return the xAI key from the environment. Never log the return value."""
-    key = os.environ.get("XAI_API_KEY", "").strip()
+def require_api_key(settings: Settings | None = None) -> str:
+    """Return the active provider's key. Never log the return value."""
+    if settings is None:
+        settings = load_settings(load_env=False)
+    env_name = settings.api_key_env
+    key = os.environ.get(env_name, "").strip()
     if not key or key == PLACEHOLDER_API_KEY:
         raise MissingAPIKeyError(
-            "XAI_API_KEY is not set. Copy .env.example to .env in the project root "
-            "and paste the key you created at https://console.x.ai. "
+            f"{env_name} is not set. Copy .env.example to .env in the project root "
+            f"and paste the key you created at {settings.key_help_url}. "
             "Confirm .env is gitignored before you commit (run git status)."
         )
     return key

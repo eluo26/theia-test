@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict
 
 logger = logging.getLogger("vision.ingest")
 
-_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 _FRAME_NAME = re.compile(
     r"pan(?P<pan>-?\d+(?:\.\d+)?)_tilt(?P<tilt>-?\d+(?:\.\d+)?)",

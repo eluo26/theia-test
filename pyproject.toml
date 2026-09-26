@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "turret-vision"
 version = "0.2.0"
-description = "Object localization for a laser-pointing turret. Grok reads the scene; a local detector tightens boxes."
+description = "Object localization for a laser-pointing turret. A configured vision model reads the scene; a local detector tightens boxes."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

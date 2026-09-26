@@ -4,18 +4,18 @@ Python module for a HackGT tabletop laser turret. A camera scans in angle-tagged
 
 Two framings use the same pipeline: finding an object at home ("where's my blue water bottle?") and finding a package in a clinic sample closet ("where's the Jardiance starter pack?").
 
-Grok, through the OpenAI SDK against `https://api.x.ai/v1`, does scene understanding and the text query. A local open-vocabulary detector (OWLv2 by default, or Grounding DINO) can tighten boxes. The command line is `python -m vision.cli`.
+OpenAI is the current vision provider (`provider: openai` in `config.yaml`, base URL `https://api.openai.com/v1`). xAI stays available by setting `provider: xai`. Model names are read from config, so that switch does not need a code change. A local open-vocabulary detector (OWLv2 by default, or Grounding DINO) can tighten boxes. The command line is `python -m vision.cli`.
 
 The GitHub repo name for this project is `theia-test` (`https://github.com/eluo26/theia-test`). This checkout already has a git history and an `origin` remote. Do not run a "first commit" snippet that calls `git init` or replaces `origin`.
 
 ## What was verified here
 
-- `pytest -q` passes. Grok is mocked. No live xAI call was made. There is no `XAI_API_KEY` in this environment.
-- `python -m vision.cli check-config` runs and prints `present` or `missing`. It does not print the key.
+- `pytest -q` passes. The API client is mocked. Tests do not read saved scene photos.
+- `python -m vision.cli check-config` prints `present` or `missing` for the active key. It does not print the key.
 
 Not verified here:
 
-- A live Grok vision or reasoning call.
+- A live vision call on a real photo. This repo does not contain one. A models list or a tiny text call can check that `OPENAI_API_KEY` works.
 - OWLv2 or Grounding DINO weights (about 1 GB). Tests inject a fake detector and do not download them.
 - A push to `https://github.com/eluo26/theia-test` if the remote add or push in the manual steps failed.
 
@@ -84,7 +84,7 @@ python -m vision.cli index sweep.mp4 --angles-csv angles.csv
 
 `ask` accepts the same `--sweep` and `--angles-csv` flags. `--out-dir` redirects `catalog.json` and debug images. `--no-cache` ignores `data/cache/`.
 
-Without `XAI_API_KEY`, `index`, `ask`, and `eval` exit with a message that points at https://console.x.ai and `.env`. They do not invent a model name. If a live call fails, the error points at https://docs.x.ai.
+Without `OPENAI_API_KEY` (or `XAI_API_KEY` when `provider` is `xai`), `index`, `ask`, and `eval` exit with a message that points at the key page and `.env`. They do not invent a model name. If a live call fails, the error points at the provider docs.
 
 ## Library
 
@@ -101,15 +101,15 @@ result = locate("where's my blue water bottle?", catalog)
 
 1. Ingest stills. `pan060_tilt-10.jpg` supplies pan and tilt. `manifest.json` entries `{file, pan, tilt, timestamp}` win over the filename. Full resolution is kept.
 2. Undistort when `fx`, `fy`, `cx`, `cy`, and `dist_coeffs` are all set. Those intrinsics also override the FOV model. Tile with `tile_grid` `[columns, rows]` and `tile_overlap`.
-3. Each tile goes to `grok_fast_model` (structured vision). Calls run with `max_concurrency` and exponential backoff. Invalid JSON is retried once, then that tile is logged and skipped. The cache key is the SHA-256 of the image bytes, prompt, model, and image detail.
-4. For each Grok detection, the local detector runs on that tile with the label as the text query. If IoU is at least `refine_iou`, the detector box is kept (`box_source` `detector`). Otherwise the Grok box is kept and confidence is lower.
+3. Each tile goes to the configured fast vision model (structured vision). Calls run with `max_concurrency` and exponential backoff. Invalid JSON is retried once, then that tile is logged and skipped. The cache key is the SHA-256 of the image bytes, prompt, model, and image detail.
+4. For each vision detection, the local detector runs on that tile with the label as the text query. If IoU is at least `refine_iou`, the detector box is kept (`box_source` `detector`). Otherwise the vision box is kept and confidence is lower.
 5. The box center becomes a camera ray, rotated by tilt about x and then pan about vertical. Azimuth is `atan2(dx, dz)`. Elevation is `atan2(dy, sqrt(dx^2+dz^2))`. This is the full rotation, not a small-angle shortcut.
 6. Detections merge when the rapidfuzz token ratio is at least `label_sim` and the angular separation is at most `merge_deg`. The representative view is the one closest to its frame center. Ids are `obj_001`, `obj_002`, ... in a stable order.
-7. The question plus catalog text (id, label, description, count, drug name only) goes to `grok_reasoning_model`. It returns status, object id, up to three candidates, confidence, and a reason.
-8. The chosen object is cropped with `crop_pad`. Grok is asked whether the crop is that label and to return a tight box. The detector runs on the crop too. The tighter box is kept when the two agree, then azimuth and elevation are recomputed.
+7. The question plus catalog text (id, label, description, count, drug name only) goes to the configured reasoning model. It returns status, object id, up to three candidates, confidence, and a reason.
+8. The chosen object is cropped with `crop_pad`. The fast vision model is asked whether the crop is that label and to return a tight box. The detector runs on the crop too. The tighter box is kept when the two agree, then azimuth and elevation are recomputed.
 9. With `clinic_mode: true`, `drug_name` is fuzzy-matched against `data/inventory.json` and the match is attached to `metadata.inventory`.
 
-Debug images use green for Grok boxes and blue for detector boxes, with labels and ids.
+Debug images use green for vision-model boxes and blue for detector boxes, with labels and ids. The green legend still reads "Grok" from the earlier overlay code.
 
 Image-conditioned OWLv2 search from `data/references/` is implemented in `vision/references.py` (`image_guided_boxes`) and is not called by `index` or `ask`. It needs the detector weights and was not run here. See the manual steps.
 
@@ -119,12 +119,21 @@ Do not generate stand-in pictures. Put real photos in `data/test_scenes/<scene>/
 
 ## Config
 
-Model ids live only in `config.yaml`. They were read from the xAI docs on 2026-09-26:
+`provider` defaults to `openai`. Model ids live only in `config.yaml`. The OpenAI ids were copied from the docs on 2026-09-26:
 
-- `grok_fast_model`: `grok-4.3` for indexing and vision. https://docs.x.ai/developers/models/grok-4.3
-- `grok_reasoning_model`: `grok-4.7` for the text query. https://docs.x.ai/developers/models/grok-4.7
+- `openai_fast_model`: `gpt-6-luna` for indexing and vision. https://developers.openai.com/api/docs/models/gpt-6-luna
+- `openai_reasoning_model`: `gpt-6-astra` for the text query. https://developers.openai.com/api/docs/models/gpt-6-astra
+- Catalog: https://developers.openai.com/api/docs/models
 
-Vision calls use `client.beta.chat.completions.parse(..., response_format=<pydantic model>)` with `image_url` and `detail` from config. Supported types are jpg, jpeg, and png, up to `max_image_bytes` (20 MiB). Reasoning effort is a Responses API field (`reasoning.effort`). It is not sent on Chat Completions.
+Set `provider: xai` to use the existing Grok settings instead:
+
+- `grok_fast_model`: `grok-4.3`. https://docs.x.ai/developers/models/grok-4.3
+- `grok_reasoning_model`: `grok-4.7`. https://docs.x.ai/developers/models/grok-4.7
+- Base URL `https://api.x.ai/v1`, key env `XAI_API_KEY`.
+
+Vision calls use `client.chat.completions.parse(..., response_format=<pydantic model>)` with an `image_url` data URL and `detail` from config. https://developers.openai.com/api/docs/guides/structured-outputs and https://platform.openai.com/docs/guides/images-vision
+
+OpenAI image input allows PNG, JPEG, WEBP, and non-animated GIF. `image_detail` may be `low`, `high`, `original`, or `auto`. The local size cap is `max_image_bytes`. Reasoning effort is a Responses API field (`reasoning.effort`). It is not sent on Chat Completions.
 
 `detector` is `owlv2` (`google/owlv2-base-patch16-ensemble`) or `grounding_dino` (`IDEA-Research/grounding-dino-tiny`).
 
@@ -133,9 +142,9 @@ Azimuth 0 is pan home. Positive azimuth is to the right, clockwise from above. E
 ## MANUAL STEPS
 
 - Create the private GitHub repo https://github.com/eluo26/theia-test if needed and push (commands below). Do not run a snippet that does `git init` or that replaces the existing `origin` remote.
-- Create a console.x.ai account, add credits, create an API key, and copy it into `.env` as `XAI_API_KEY`. `git status` must not show `.env`.
-- Share keys via DM. Each teammate uses their own key. If a key is leaked, revoke it at https://console.x.ai and create a new one. Deleting a commit is not enough.
-- Confirm the model names in the docs still match `config.yaml`: https://docs.x.ai/developers/models/grok-4.3 and https://docs.x.ai/developers/models/grok-4.7
+- Copy `.env.example` to `.env` and set `OPENAI_API_KEY`. Create the key at https://platform.openai.com/api-keys. `git status` must not show `.env`.
+- For xAI later, set `provider: xai` and add `XAI_API_KEY` from https://console.x.ai. Share keys via DM. Each teammate uses their own key. If a key is leaked, revoke it and create a new one. Deleting a commit is not enough.
+- Confirm the model names in the docs still match `config.yaml`: https://developers.openai.com/api/docs/models/gpt-6-luna and https://developers.openai.com/api/docs/models/gpt-6-astra. If a live call fails, update the ids from those pages. Do not invent a replacement id in code.
 - Create a venv and `pip install -r requirements.txt`. Detector weights are about 1 GB on the first real detector run (`pip install -r requirements-detector.txt`).
 - Shoot a real staged scene later: phone main lens, 12 MP, objects at 2–3 m, photos every ~20 degrees, angles in the filenames, one slow sweep video, and a hand-written `ground_truth.json`.
 - Measure the camera FOV and, if you can, do a checkerboard calibration. Replace the placeholder width, height, FOV, and intrinsics in `config.yaml`.

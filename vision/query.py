@@ -75,7 +75,7 @@ def locate(
 ) -> QueryResult:
     """Ask which catalog object the question refers to, then tighten its box."""
     settings = settings if settings is not None else load_settings()
-    require_api_key()
+    require_api_key(settings)
     if not catalog.objects:
         return _empty("not_found", 0.0, "The catalog has no objects.")
 
@@ -83,7 +83,7 @@ def locate(
         QUERY_PROMPT.format(catalog=catalog_text(catalog), query=query),
         settings,
         response_model=QueryDecision,
-        model=settings.grok_reasoning_model,
+        model=settings.reasoning_model,
         client_factory=client_factory,
         use_cache=use_cache,
     )
@@ -201,7 +201,7 @@ def _verify_crop(obj, catalog, settings, *, client_factory, detector, use_cache)
         settings,
         prompt=VERIFY_PROMPT.format(label=obj.label),
         response_model=VerifyResponse,
-        model=settings.grok_fast_model,
+        model=settings.fast_model,
         client_factory=client_factory,
         use_cache=use_cache,
     )

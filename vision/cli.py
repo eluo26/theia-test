@@ -61,9 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     describe = sub.add_parser(
         "describe",
-        help="Run one Grok vision call on one image and write an annotated debug image.",
+        help="Run one vision call on one image and write an annotated debug image.",
     )
-    describe.add_argument("image", type=Path, help="A .jpg, .jpeg, or .png file")
+    describe.add_argument(
+        "image",
+        type=Path,
+        help="A .jpg, .jpeg, .png, .webp, or non-animated .gif file",
+    )
     describe.add_argument(
         "--out-dir",
         type=Path,
@@ -155,14 +159,16 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _check_config(settings) -> int:
-    key_state = "present" if api_key_is_present() else "missing"
+    key_state = "present" if api_key_is_present(settings) else "missing"
     lines = [
-        f"grok_fast_model: {settings.grok_fast_model}",
-        f"grok_reasoning_model: {settings.grok_reasoning_model}",
-        f"xai_base_url: {settings.xai_base_url}",
+        f"provider: {settings.provider}",
+        f"fast_model: {settings.fast_model}",
+        f"reasoning_model: {settings.reasoning_model}",
+        f"base_url: {settings.base_url}",
+        f"api_key_env: {settings.api_key_env}",
+        f"{settings.api_key_env}: {key_state}",
         f"image_detail: {settings.image_detail}",
         f"request_timeout_s: {settings.request_timeout_s}",
-        f"XAI_API_KEY: {key_state}",
         f"cache_dir: {settings.cache_path}",
         f"out_dir: {settings.out_path}",
         f"detector: {settings.detector}",
@@ -181,7 +187,7 @@ def _video_kwargs(args) -> dict:
 
 
 def _index(settings, args) -> int:
-    require_api_key()
+    require_api_key(settings)
     catalog = build_catalog(args.scan_dir, settings=settings, **_video_kwargs(args))
     print(catalog.model_dump_json(indent=2))
     print(f"wrote {settings.out_path / 'catalog.json'}", file=sys.stderr)
@@ -189,7 +195,7 @@ def _index(settings, args) -> int:
 
 
 def _ask(settings, args) -> int:
-    require_api_key()
+    require_api_key(settings)
     catalog = build_catalog(args.scan_dir, settings=settings, **_video_kwargs(args))
     result = locate(args.query, catalog, settings=settings, use_cache=not args.no_cache)
     print(json.dumps(public_query_dict(result), indent=2))
@@ -197,7 +203,7 @@ def _ask(settings, args) -> int:
 
 
 def _eval_scene(settings, args) -> int:
-    require_api_key()
+    require_api_key(settings)
     report = evaluate_scene(args.scene, settings=settings, use_cache=not args.no_cache)
     print(report.model_dump_json(indent=2))
     return 0

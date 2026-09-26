@@ -11,7 +11,7 @@ from vision.schemas import Catalog, Detection, IndexResponse
 
 
 def _api_key() -> str:
-    return "xai-" + "testkeyvalue123456"
+    return "sk-" + "test" + "notalivekeyvalue123456"
 
 
 def _settings(tmp_path: Path, **updates):
@@ -106,13 +106,13 @@ def test_dedupe_writes_a_catalog(tmp_path: Path):
 
 
 def test_build_catalog_merges_two_views_and_writes_json(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     for name, pan in (("pan010_tilt000.png", 10), ("pan012_tilt000.png", 12)):
         Image.new("RGB", (200, 100), (255, 255, 255)).save(tmp_path / name)
     settings = _settings(tmp_path)
 
     def fake_image(image_bytes, mime, settings, *, prompt, response_model, model, **kwargs):
-        assert model == settings.grok_fast_model
+        assert model == settings.fast_model
         assert response_model is IndexResponse
         return (
             IndexResponse.model_validate(
@@ -144,7 +144,7 @@ def test_build_catalog_merges_two_views_and_writes_json(tmp_path, monkeypatch):
 
 
 def test_detector_box_is_kept_when_iou_is_high(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     Image.new("RGB", (100, 80), (255, 255, 255)).save(tmp_path / "pan000_tilt000.png")
     settings = _settings(tmp_path)
 
@@ -180,7 +180,7 @@ def test_detector_box_is_kept_when_iou_is_high(tmp_path, monkeypatch):
 
 
 def test_invalid_tile_is_skipped(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     Image.new("RGB", (32, 32), (255, 255, 255)).save(tmp_path / "pan000_tilt000.png")
     settings = _settings(tmp_path, validation_retries=1)
 
@@ -197,10 +197,9 @@ def test_invalid_tile_is_skipped(tmp_path, monkeypatch, caplog):
     boom = Boom()
 
     def factory(**kwargs):
-        beta = type("B", (), {})()
-        beta.chat = type("Chat", (), {})()
-        beta.chat.completions = boom
-        return type("Client", (), {"beta": beta})()
+        chat = type("Chat", (), {})()
+        chat.completions = boom
+        return type("Client", (), {"chat": chat})()
 
     import logging
 

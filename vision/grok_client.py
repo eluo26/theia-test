@@ -1,13 +1,14 @@
-"""xAI vision calls through the OpenAI-compatible Chat Completions API.
+"""Vision calls through Chat Completions.
 
-Model ids, the base URL, image detail, and the timeout come from config.yaml.
-This module does not substitute a different model when a call fails.
+The provider, model ids, base URL, image detail, and timeout come from
+config.yaml. This module does not substitute a different model when a call fails.
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import logging
 import re
@@ -19,6 +20,7 @@ from typing import Any, TypeVar
 
 import httpx
 from openai import OpenAI
+from PIL import Image
 from pydantic import BaseModel, ValidationError
 
 from vision.config import Settings, require_api_key
@@ -27,13 +29,7 @@ from vision.schemas import IndexResponse
 T = TypeVar("T", bound=BaseModel)
 _cache_lock = threading.Lock()
 
-logger = logging.getLogger("vision.grok")
-
-DOCS = (
-    "https://docs.x.ai/developers/models",
-    "https://docs.x.ai/developers/model-capabilities/text/structured-outputs",
-    "https://docs.x.ai/developers/model-capabilities/legacy/chat-completions",
-)
+logger = logging.getLogger("vision.client")
 
 INDEX_PROMPT = """You are the scene-understanding module for a tabletop laser turret.
 List every distinct physical object that is visible. Skip the empty wall, floor, and bare tabletop.
@@ -49,19 +45,29 @@ For each object provide:
 Only include objects you can actually see. Do not invent hidden items.
 """
 
-_KEY_PATTERN = re.compile(r"xai-[A-Za-z0-9_\-]{8,}")
-_ALLOWED_SUFFIXES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+_KEY_PATTERN = re.compile(r"(?:xai-|sk-)[A-Za-z0-9_\-]{8,}")
+_AUTH_PATTERN = re.compile(r"(?i)authorization:\s*bearer\s+\S+")
+# OpenAI image input: PNG, JPEG, WEBP, and non-animated GIF.
+# https://platform.openai.com/docs/guides/images-vision
+_ALLOWED_SUFFIXES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+_ALLOWED_MIMES = set(_ALLOWED_SUFFIXES.values())
 _RETRIABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
 
 
 class GrokCallError(RuntimeError):
-    """The xAI call failed, or the response did not match the schema."""
+    """The vision call failed, or the response did not match the schema."""
 
 
 def redact(text: str) -> str:
-    """Remove API-key-like strings from text that might be logged or raised."""
+    """Remove API-key-like strings and Authorization headers before logging."""
     redacted = _KEY_PATTERN.sub("[REDACTED]", text)
-    return redacted
+    return _AUTH_PATTERN.sub("Authorization: Bearer [REDACTED]", redacted)
 
 
 def response_cache_key(
@@ -91,7 +97,7 @@ def describe_image(
     sleeper: Callable[[float], None] = time.sleep,
     use_cache: bool = True,
 ) -> tuple[IndexResponse, str]:
-    """Ask Grok to list objects in one image. Returns the parsed response and cache status."""
+    """List objects in one image. Returns the parsed response and cache status."""
     path = Path(image_path)
     image_bytes, mime = _load_image_bytes(path, settings)
     return parse_image_bytes(
@@ -100,7 +106,7 @@ def describe_image(
         settings,
         prompt=INDEX_PROMPT,
         response_model=IndexResponse,
-        model=settings.grok_fast_model,
+        model=settings.fast_model,
         client_factory=client_factory,
         sleeper=sleeper,
         use_cache=use_cache,
@@ -186,16 +192,16 @@ def _run_completion(
         cached = _read_cache(cache_file, model, response_model)
         if cached is not None:
             logger.info(
-                "grok response model=%s latency_ms=0 cache=hit validation=passed",
+                "vision response model=%s latency_ms=0 cache=hit validation=passed",
                 model,
             )
             return cached, "hit"
 
-    api_key = require_api_key()
+    api_key = require_api_key(settings)
     factory = client_factory or _default_client
     client = factory(
         api_key=api_key,
-        base_url=settings.xai_base_url,
+        base_url=settings.base_url,
         timeout=httpx.Timeout(settings.request_timeout_s),
         max_retries=0,
     )
@@ -215,7 +221,7 @@ def _run_completion(
             last_error = redact(str(exc))
             latency_ms = (time.perf_counter() - started) * 1000
             logger.warning(
-                "grok response model=%s latency_ms=%.0f cache=miss validation=failed attempt=%s error=%s",
+                "vision response model=%s latency_ms=%.0f cache=miss validation=failed attempt=%s error=%s",
                 model,
                 latency_ms,
                 attempt,
@@ -227,7 +233,7 @@ def _run_completion(
         else:
             latency_ms = (time.perf_counter() - started) * 1000
             logger.info(
-                "grok response model=%s latency_ms=%.0f cache=miss validation=passed",
+                "vision response model=%s latency_ms=%.0f cache=miss validation=passed",
                 model,
                 latency_ms,
             )
@@ -236,23 +242,40 @@ def _run_completion(
             return parsed, "miss"
 
     raise GrokCallError(
-        "Grok returned a response that failed schema validation "
+        "The model returned a response that failed schema validation "
         f"{attempts} time(s) for model {model!r}. The image was skipped. "
         f"Last error: {last_error}"
     )
 
 
 def _check_encoded_image(image_bytes: bytes, mime: str, settings: Settings) -> None:
-    if mime not in {"image/jpeg", "image/png"}:
+    if mime not in _ALLOWED_MIMES:
+        allowed = ", ".join(sorted(_ALLOWED_SUFFIXES))
         raise GrokCallError(
-            f"Unsupported image type {mime!r}. The xAI image docs allow .jpg, .jpeg, .png only: {DOCS[2]}"
+            f"Unsupported image type {mime!r}. Supported types are {allowed}: {settings.docs_urls[-1]}"
         )
+    _reject_animated_gif(image_bytes, mime, settings.docs_urls[-1])
     if not image_bytes:
         raise GrokCallError("Image is empty")
     if len(image_bytes) > settings.max_image_bytes:
         raise GrokCallError(
             f"Image is {len(image_bytes)} bytes, above the configured limit of "
-            f"{settings.max_image_bytes} bytes ({DOCS[2]})."
+            f"{settings.max_image_bytes} bytes ({settings.docs_urls[-1]})."
+        )
+
+
+def _reject_animated_gif(image_bytes: bytes, mime: str, docs_url: str) -> None:
+    if mime != "image/gif":
+        return
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            animated = bool(getattr(image, "is_animated", False))
+    except Exception:
+        return
+    if animated:
+        raise GrokCallError(
+            "Animated GIF is not supported. The image docs allow a non-animated GIF only: "
+            f"{docs_url}"
         )
 
 
@@ -268,13 +291,13 @@ def _load_image_bytes(path: Path, settings: Settings) -> tuple[bytes, str]:
     if mime is None:
         allowed = ", ".join(sorted(_ALLOWED_SUFFIXES))
         raise GrokCallError(
-            f"Unsupported image type {suffix!r}. The xAI image docs allow {allowed} only: {DOCS[2]}"
+            f"Unsupported image type {suffix!r}. Supported types are {allowed}: {settings.docs_urls[-1]}"
         )
     image_bytes = path.read_bytes()
     if len(image_bytes) > settings.max_image_bytes:
         raise GrokCallError(
             f"Image is {len(image_bytes)} bytes, above the configured limit of "
-            f"{settings.max_image_bytes} bytes ({DOCS[2]})."
+            f"{settings.max_image_bytes} bytes ({settings.docs_urls[-1]})."
         )
     if not image_bytes:
         raise GrokCallError(f"Image file is empty: {path}")
@@ -311,9 +334,11 @@ def _call_with_transport_retries(
     attempts = settings.max_transport_retries + 1
     for attempt in range(1, attempts + 1):
         try:
-            # Documented Chat Completions fields only. reasoning.effort belongs
-            # to the Responses API and is not sent here.
-            return client.beta.chat.completions.parse(
+            # Chat Completions structured output. The current OpenAI SDK example is
+            # client.chat.completions.parse(..., response_format=<pydantic model>).
+            # https://developers.openai.com/api/docs/guides/structured-outputs
+            # reasoning.effort is a Responses API field and is not sent here.
+            return client.chat.completions.parse(
                 model=model,
                 messages=messages,
                 response_format=response_model,
@@ -323,12 +348,12 @@ def _call_with_transport_retries(
         except Exception as exc:
             status = getattr(exc, "status_code", None)
             if status in {400}:
-                raise GrokCallError(_docs_error(model, status, exc)) from exc
+                raise GrokCallError(_docs_error(settings, model, status, exc)) from exc
             if status in {401, 403}:
                 raise GrokCallError(
-                    f"xAI rejected the API key (HTTP {status}). "
-                    "Check XAI_API_KEY in .env. If the key leaked, revoke it at "
-                    "https://console.x.ai and create a new one. "
+                    f"The API rejected the key (HTTP {status}). "
+                    f"Check {settings.api_key_env} in .env. If the key leaked, revoke it at "
+                    f"{settings.key_help_url} and create a new one. "
                     f"Details: {redact(str(exc))}"
                 ) from exc
             retriable = status in _RETRIABLE_STATUS or type(exc).__name__ in {
@@ -337,24 +362,24 @@ def _call_with_transport_retries(
                 "RateLimitError",
             }
             if not retriable or attempt == attempts:
-                raise GrokCallError(_docs_error(model, status, exc)) from exc
+                raise GrokCallError(_docs_error(settings, model, status, exc)) from exc
             delay = settings.retry_base_delay_s * (2 ** (attempt - 1))
             logger.warning(
-                "grok transport retry model=%s attempt=%s delay_s=%s error=%s",
+                "vision transport retry model=%s attempt=%s delay_s=%s error=%s",
                 model,
                 attempt,
                 delay,
                 redact(f"{type(exc).__name__}: {exc}"),
             )
             sleeper(delay)
-    raise GrokCallError(_docs_error(model, None, RuntimeError("retries exhausted")))
+    raise GrokCallError(_docs_error(settings, model, None, RuntimeError("retries exhausted")))
 
 
-def _docs_error(model: str, status: int | None, exc: BaseException) -> str:
+def _docs_error(settings: Settings, model: str, status: int | None, exc: BaseException) -> str:
     status_text = f"HTTP {status}" if status is not None else type(exc).__name__
-    links = " ".join(DOCS)
+    links = " ".join(settings.docs_urls)
     return (
-        f"xAI API call failed ({status_text}) for model {model!r}. "
+        f"API call failed ({status_text}) for model {model!r}. "
         "Check the current vision model names and Chat Completions parameters in the docs "
         f"instead of changing the model in code: {links}. "
         f"Details: {redact(str(exc))}"

@@ -13,7 +13,7 @@ from vision.schemas import Catalog, CatalogObject, QueryDecision, VerifyResponse
 
 
 def _api_key() -> str:
-    return "xai-" + "testkeyvalue123456"
+    return "sk-" + "test" + "notalivekeyvalue123456"
 
 
 def _object(frame: str) -> CatalogObject:
@@ -55,7 +55,7 @@ def _settings(tmp_path: Path, **updates):
 
 
 def test_locate_returns_the_json_contract(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     frame = "pan030_tilt-10.png"
     Image.new("RGB", (200, 100), (240, 240, 240)).save(tmp_path / frame)
     catalog = Catalog(
@@ -86,7 +86,7 @@ def test_locate_returns_the_json_contract(tmp_path, monkeypatch):
 
     def fake_image(image_bytes, mime, settings, *, prompt, response_model, model, **kwargs):
         assert response_model is VerifyResponse
-        assert model == settings.grok_fast_model
+        assert model == settings.fast_model
         assert "reasoning_effort" not in kwargs
         return (
             VerifyResponse(is_match=True, box=[115, 115, 885, 885], reason="Yes, tight box."),
@@ -126,13 +126,13 @@ def test_locate_returns_the_json_contract(tmp_path, monkeypatch):
     assert payload["metadata"]["count"] == 1
     assert payload["metadata"]["last_seen"] == "2026-09-26T15:40:00"
     assert "inventory" not in payload["metadata"]
-    assert seen["model"] == settings.grok_reasoning_model
+    assert seen["model"] == settings.reasoning_model
     assert "drug_name" in catalog_text(catalog)
     json.dumps(payload)
 
 
 def test_clinic_mode_attaches_inventory(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     frame = "pan000_tilt000.png"
     Image.new("RGB", (200, 100), (255, 255, 255)).save(tmp_path / frame)
     obj = _object(frame).model_copy(
@@ -167,7 +167,7 @@ def test_clinic_mode_attaches_inventory(tmp_path, monkeypatch):
 
 
 def test_tighter_detector_box_on_the_crop(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     frame = "pan000_tilt000.png"
     Image.new("RGB", (200, 100), (255, 255, 255)).save(tmp_path / frame)
     catalog = Catalog(
@@ -199,7 +199,7 @@ def test_tighter_detector_box_on_the_crop(tmp_path, monkeypatch):
 
 
 def test_text_query_does_not_send_reasoning_effort(tmp_path, monkeypatch):
-    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     calls = []
 
@@ -221,18 +221,18 @@ def test_text_query_does_not_send_reasoning_effort(tmp_path, monkeypatch):
 
     def factory(**kwargs):
         chat = SimpleNamespace(completions=Completions())
-        return SimpleNamespace(beta=SimpleNamespace(chat=chat))
+        return SimpleNamespace(chat=chat)
 
     parse_text(
         "where is it?",
         settings,
         response_model=QueryDecision,
-        model=settings.grok_reasoning_model,
+        model=settings.reasoning_model,
         client_factory=factory,
         use_cache=False,
     )
     assert set(calls[0]) == {"model", "messages", "response_format"}
-    assert calls[0]["model"] == settings.grok_reasoning_model
+    assert calls[0]["model"] == settings.reasoning_model
     assert calls[0]["response_format"] is QueryDecision
     assert isinstance(calls[0]["messages"][0]["content"], str)
 

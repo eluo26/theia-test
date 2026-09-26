@@ -1,6 +1,6 @@
 """Object localization for a laser-pointing turret.
 
-Grok does scene understanding and query reasoning.
+The configured vision provider does scene understanding and query reasoning.
 A local open-vocabulary detector tightens boxes when its weights are installed.
 """
 
