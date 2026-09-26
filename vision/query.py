@@ -17,6 +17,7 @@ from vision.config import REPO_ROOT, Settings, load_settings, require_api_key
 from vision.detector import tighter_agreeing_box
 from vision.geometry import box_center_angles
 from vision.grok_client import GrokCallError, redact
+from vision.matching import token_ratio
 from vision.preprocess import encode_png
 from vision.references import reference_note
 from vision.schemas import (
@@ -88,6 +89,7 @@ def locate(
         use_cache=use_cache,
     )
     candidates = _known_candidates(decision.candidates, catalog)[:3]
+    decision = _collapse_same_kind(decision, candidates, catalog, settings)
     chosen = _resolve(decision, catalog)
     if decision.status == "not_found" or chosen is None:
         return QueryResult(
@@ -277,6 +279,49 @@ def _frame_path(catalog: Catalog, obj: CatalogObject) -> Path | None:
 
 def catalog_object_map(catalog: Catalog) -> dict[str, CatalogObject]:
     return {obj.object_id: obj for obj in catalog.objects}
+
+
+def _collapse_same_kind(
+    decision: QueryDecision,
+    candidates: list,
+    catalog: Catalog,
+    settings: Settings,
+) -> QueryDecision:
+    """Aim at the best view when one kind of object was recognized more than once.
+
+    Two photos of a laptop used to stay ambiguous, so the laser would not point.
+    Same labels (the configured rapidfuzz threshold) collapse to the
+    highest-confidence candidate. Different objects stay ambiguous.
+    """
+    if decision.status != "ambiguous" or not _same_kind(candidates, catalog, settings.label_sim):
+        return decision
+    by_id = catalog_object_map(catalog)
+    best = max(candidates, key=lambda item: (item.confidence, by_id[item.object_id].confidence))
+    note = "Same kind of object in more than one photo; aiming at the highest-confidence view."
+    reason = decision.reason if note in decision.reason else f"{decision.reason} {note}".strip()
+    logger.info("collapsed %s same-kind candidates to %s", len(candidates), best.object_id)
+    return decision.model_copy(
+        update={
+            "status": "found",
+            "object_id": best.object_id,
+            "confidence": best.confidence,
+            "reason": reason,
+        }
+    )
+
+
+def _same_kind(candidates, catalog: Catalog, label_sim: float) -> bool:
+    if len(candidates) < 2:
+        return False
+    by_id = catalog_object_map(catalog)
+    if len({item.object_id for item in candidates}) == 1:
+        return True
+    labels = [by_id[item.object_id].label for item in candidates]
+    for index, left in enumerate(labels):
+        for right in labels[index + 1 :]:
+            if token_ratio(left, right) < label_sim:
+                return False
+    return True
 
 
 def _resolve(decision: QueryDecision, catalog: Catalog) -> CatalogObject | None:

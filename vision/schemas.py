@@ -122,8 +122,18 @@ class CatalogObject(BaseModel):
     image_height: int = Field(gt=0)
 
 
+class FrameMemory(BaseModel):
+    """Detections remembered for one photo so an unchanged file is not uploaded again."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_file: str
+    fingerprint: str
+    detections: list[Detection]
+
+
 class Catalog(BaseModel):
-    """Written to data/out/catalog.json."""
+    """Written to data/out/catalog.json. frames is the per-photo object memory."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -131,6 +141,7 @@ class Catalog(BaseModel):
     created_at: str
     scan_dir: str | None = None
     fingerprint: str | None = None
+    frames: list[FrameMemory] = Field(default_factory=list)
 
 
 class Candidate(BaseModel):

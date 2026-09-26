@@ -8,8 +8,9 @@ from vision.grok_client import parse_text
 
 from vision.config import load_settings
 from vision.detector import DetectorHit, NullDetector, ScriptedDetector
+from vision.matching import token_ratio
 from vision.query import catalog_text, locate, public_query_dict
-from vision.schemas import Catalog, CatalogObject, QueryDecision, VerifyResponse
+from vision.schemas import Candidate, Catalog, CatalogObject, QueryDecision, VerifyResponse
 
 
 def _api_key() -> str:
@@ -196,6 +197,115 @@ def test_tighter_detector_box_on_the_crop(tmp_path, monkeypatch):
     assert result.range_m is None
     assert result.azimuth_deg == pytest_close(0.0)
     assert result.elevation_deg == pytest_close(0.0)
+
+
+def test_ambiguous_same_label_aims_at_the_higher_confidence_view(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    left = _object("pan000_tilt000.png").model_copy(
+        update={
+            "object_id": "obj_001",
+            "label": "laptop",
+            "description": "open laptop",
+            "azimuth_deg": 0.0,
+            "elevation_deg": 0.0,
+            "pan_deg": 0.0,
+            "tilt_deg": 0.0,
+            "confidence": 0.45,
+        }
+    )
+    right = _object("pan030_tilt000.png").model_copy(
+        update={
+            "object_id": "obj_002",
+            "label": "laptop",
+            "description": "the same laptop from another photo",
+            "azimuth_deg": 30.0,
+            "elevation_deg": 1.0,
+            "pan_deg": 30.0,
+            "tilt_deg": 0.0,
+            "confidence": 0.45,
+        }
+    )
+    catalog = Catalog(
+        objects=[left, right],
+        created_at="2026-09-26T16:00:00",
+        scan_dir=str(tmp_path),
+    )
+    settings = _settings(tmp_path)
+
+    def fake_text(prompt, settings, *, response_model, model, **kwargs):
+        return (
+            QueryDecision(
+                status="ambiguous",
+                object_id=None,
+                confidence=0.5,
+                reason="Two views of a laptop",
+                candidates=[
+                    Candidate(object_id="obj_001", label="laptop", confidence=0.40, reason="left view"),
+                    Candidate(object_id="obj_002", label="laptop", confidence=0.92, reason="clearer view"),
+                ],
+            ),
+            "miss",
+        )
+
+    monkeypatch.setattr("vision.grok_client.parse_text", fake_text)
+    result = locate("where is the laptop?", catalog, settings=settings, detector=NullDetector())
+    assert result.status == "found"
+    assert result.object_id == "obj_002"
+    assert result.label == "laptop"
+    assert result.azimuth_deg == 30.0
+    assert result.elevation_deg == 1.0
+    assert result.confidence == 0.92
+
+
+def test_ambiguous_different_labels_stay_ambiguous(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    laptop = _object("pan000_tilt000.png").model_copy(
+        update={
+            "object_id": "obj_001",
+            "label": "laptop",
+            "azimuth_deg": 0.0,
+            "elevation_deg": 0.0,
+            "pan_deg": 0.0,
+            "tilt_deg": 0.0,
+        }
+    )
+    bottle = _object("pan030_tilt000.png").model_copy(
+        update={
+            "object_id": "obj_002",
+            "label": "water bottle",
+            "description": "clear bottle",
+            "azimuth_deg": 30.0,
+            "elevation_deg": -2.0,
+            "pan_deg": 30.0,
+            "tilt_deg": 0.0,
+        }
+    )
+    catalog = Catalog(
+        objects=[laptop, bottle],
+        created_at="2026-09-26T16:00:00",
+        scan_dir=str(tmp_path),
+    )
+    settings = _settings(tmp_path)
+    assert token_ratio("laptop", "water bottle") < settings.label_sim
+
+    def fake_text(prompt, settings, *, response_model, model, **kwargs):
+        return (
+            QueryDecision(
+                status="ambiguous",
+                object_id=None,
+                confidence=0.5,
+                reason="Two different objects",
+                candidates=[
+                    Candidate(object_id="obj_001", label="laptop", confidence=0.99, reason="laptop"),
+                    Candidate(object_id="obj_002", label="water bottle", confidence=0.80, reason="bottle"),
+                ],
+            ),
+            "miss",
+        )
+
+    monkeypatch.setattr("vision.grok_client.parse_text", fake_text)
+    result = locate("where is it?", catalog, settings=settings, detector=NullDetector())
+    assert result.status == "ambiguous"
 
 
 def test_text_query_does_not_send_reasoning_effort(tmp_path, monkeypatch):

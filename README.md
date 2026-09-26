@@ -27,6 +27,8 @@ Put JPEGs in `data/test_scenes/<scene>/`. The filename is the camera angle: `pan
 
 Use JPEG from the phone's main lens. HEIC files are ignored. `manifest.json` and `ground_truth.json` start empty. `describe`, `index`, and `ask` do not read object names from them.
 
+`data/test_scenes/side/ground_truth.json` is a score sheet for the side photos. Those angles are hand estimates from the filenames and the photos, not a survey. An object near the middle of a frame uses that frame's pan and tilt 0. An object clearly off-center is shifted by a rough fraction of the configured field of view.
+
 ## Run
 
 ```powershell
@@ -34,6 +36,7 @@ Use JPEG from the phone's main lens. HEIC files are ignored. `manifest.json` and
 .\.venv\Scripts\python.exe -m vision.cli describe data\test_scenes\<scene>\pan0_tilt0.jpg
 .\.venv\Scripts\python.exe -m vision.cli index data\test_scenes\<scene>
 .\.venv\Scripts\python.exe -m vision.cli ask data\test_scenes\<scene> "where is the blue water bottle?"
+.\.venv\Scripts\python.exe -m vision.cli answer data\test_scenes\<scene> "where is the blue water bottle?"
 ```
 
 Replace `<scene>` with the folder you added, and ask about an object that is actually in those photos. `check-config` prints `present` or `missing`. It does not print the key. A later ask reuses `data/out/catalog.json` when those photos have not changed. Add `--debug` on `index` or `ask` when you want box images under `data/out/debug/`.
@@ -47,3 +50,13 @@ Offline check, with the API mocked:
 ```
 
 If a live call fails because of a model name, change that name in `config.yaml` from the provider docs. Do not put a new model id in Python.
+
+## Draft for the UI and hardware teammates
+
+This is a draft you can paste to the UI and hardware teammates. It is not an agreed contract yet.
+
+Images come in as a folder of angle-tagged stills (`pan30_tilt0.jpg`) or a `manifest.json` of `{file, pan, tilt, timestamp}`. A video uses the same angles: pass `--sweep`, or a CSV with columns `timestamp_s,pan,tilt`. This process never receives the API key from the UI.
+
+One call, `answer(scan_dir, query)`, returns both the full list of identified items (`id`, `label`, `description`, `azimuth_deg`, `elevation_deg`, `bbox_px`, and the metadata already stored on each object) and the query result (`status`, `object_id`, `label`, `azimuth_deg`, `elevation_deg`, `confidence`, `candidates`, `reason`). Azimuth 0 is pan home, positive is right; elevation 0 is horizontal, positive is up; angles are degrees; `range_m` is null.
+
+Aim the laser only when `status` is `"found"` (`fire_laser` is true only then, and `aim` is `{azimuth_deg, elevation_deg}`). `"ambiguous"` and `"not_found"` must not fire. If the same kind of object shows up in more than one photo, the result is `"found"` and aims at the highest-confidence view. Two different objects that both fit the question stay `"ambiguous"` and do not fire.

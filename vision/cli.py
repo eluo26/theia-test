@@ -6,6 +6,7 @@
   python -m vision.cli index video.mp4 --sweep START_PAN END_PAN TILT
   python -m vision.cli index video.mp4 --angles-csv angles.csv
   python -m vision.cli ask SCAN_DIR "where's my blue water bottle?"
+  python -m vision.cli answer SCAN_DIR "where's my blue water bottle?"
   python -m vision.cli eval desk
 """
 
@@ -22,6 +23,7 @@ from vision.eval import EvalError, evaluate_scene
 from vision.grok_client import GrokCallError, describe_image, redact
 from vision.index import build_catalog, catalog_for_query
 from vision.ingest import IngestError
+from vision.integrate import answer
 from vision.query import locate, public_query_dict
 from vision.viz import annotate_image, legend_name
 
@@ -123,6 +125,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write annotated images under the output debug folder",
     )
 
+    answer_cmd = sub.add_parser(
+        "answer",
+        help="Index a scan and print fire_laser, aim, the query result, and the item list.",
+    )
+    answer_cmd.add_argument("scan_dir", type=Path, help="Image folder or a video file")
+    answer_cmd.add_argument("query", type=str, help='Question, for example "where is the blue water bottle?"')
+    answer_cmd.add_argument(
+        "--sweep",
+        nargs=3,
+        type=float,
+        metavar=("START_PAN", "END_PAN", "TILT"),
+    )
+    answer_cmd.add_argument("--angles-csv", type=Path)
+    answer_cmd.add_argument("--out-dir", type=Path, default=None)
+    answer_cmd.add_argument("--no-cache", action="store_true")
+    answer_cmd.add_argument(
+        "--debug",
+        action="store_true",
+        help="Write annotated images under the output debug folder",
+    )
+
     evaluate = sub.add_parser(
         "eval",
         help="Score a scene's ground_truth.json. Pass a directory or a name under data/test_scenes.",
@@ -156,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
             return _index(settings, args)
         if args.command == "ask":
             return _ask(settings, args)
+        if args.command == "answer":
+            return _answer(settings, args)
         if args.command == "eval":
             return _eval_scene(settings, args)
     except MissingAPIKeyError as exc:
@@ -216,6 +241,13 @@ def _ask(settings, args) -> int:
     catalog = catalog_for_query(args.scan_dir, settings=settings, **_video_kwargs(settings, args))
     result = locate(args.query, catalog, settings=settings, use_cache=not args.no_cache)
     print(json.dumps(public_query_dict(result), indent=2))
+    return 0
+
+
+def _answer(settings, args) -> int:
+    require_api_key(settings)
+    payload = answer(args.scan_dir, args.query, settings=settings, **_video_kwargs(settings, args))
+    print(json.dumps(payload, indent=2))
     return 0
 
 

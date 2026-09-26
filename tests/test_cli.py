@@ -92,6 +92,8 @@ def test_index_and_ask_fail_without_a_key(tmp_path, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "OPENAI_API_KEY" in err
     assert "platform.openai.com" in err
+    assert main(["answer", str(tmp_path), "where is the bottle?"]) == 1
+    assert "OPENAI_API_KEY" in capsys.readouterr().err
 
 
 def test_index_and_ask_succeed_when_the_api_is_mocked(tmp_path, monkeypatch, capsys):
@@ -165,3 +167,13 @@ def test_index_and_ask_succeed_when_the_api_is_mocked(tmp_path, monkeypatch, cap
     assert payload["range_m"] is None
     assert payload["object_id"] == "obj_001"
     assert _api_key() not in asked.out + asked.err
+
+    assert main(["answer", str(tmp_path), "where is the bottle?"]) == 0
+    answered = json.loads(capsys.readouterr().out)
+    assert answered["fire_laser"] is True
+    assert answered["aim"]["azimuth_deg"] == payload["azimuth_deg"]
+    assert answered["result"]["status"] == "found"
+    assert answered["result"]["object_id"] == "obj_001"
+    assert answered["items"][0]["id"] == "obj_001"
+    assert answered["items"][0]["label"] == "blue water bottle"
+    assert _api_key() not in json.dumps(answered)

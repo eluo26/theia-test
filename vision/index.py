@@ -19,10 +19,24 @@ from vision.config import Settings, load_settings
 from vision.detector import GROK_ONLY_CONFIDENCE, refine_box
 from vision.geometry import angular_distance_deg, box_center_angles
 from vision.grok_client import GrokCallError, redact
-from vision.ingest import LoadedFrame, _IMAGE_SUFFIXES, load_scan
+from vision.ingest import (
+    IngestError,
+    LoadedFrame,
+    _IMAGE_SUFFIXES,
+    load_scan,
+    load_still_frames,
+    still_frame_meta,
+)
 from vision.matching import token_ratio
 from vision.preprocess import Tile, encode_jpeg, make_tiles, prepare_frame, shift_box
-from vision.schemas import Catalog, CatalogObject, Detection, IndexResponse, norm_box_to_pixels
+from vision.schemas import (
+    Catalog,
+    CatalogObject,
+    Detection,
+    FrameMemory,
+    IndexResponse,
+    norm_box_to_pixels,
+)
 from vision.viz import annotate_detections, legend_name
 
 logger = logging.getLogger("vision.index")
@@ -42,27 +56,48 @@ def build_catalog(
     """Index angle-tagged photos (or one sweep video) and write catalog.json."""
     settings = settings if settings is not None else load_settings()
     source = Path(scan_dir)
-    frames = load_scan(
-        source,
-        out_dir=settings.out_path,
-        video_sample_every_s=settings.video_sample_every_s,
-        blur_threshold=settings.blur_threshold,
-        sweep=sweep,
-        angles_csv=angles_csv,
-        max_edge=settings.api_max_edge,
-    )
+    reused: list[Detection] = []
+    frame_memories: list[FrameMemory] = []
+    pending: list[tuple[str, str]] = []
+    if source.is_dir():
+        if sweep is not None or angles_csv is not None:
+            raise IngestError(
+                "--sweep and --angles-csv apply to a video file, not an image folder."
+            )
+        frames, reused, frame_memories, pending = _load_changed_stills(
+            source, settings, use_cache=use_cache
+        )
+    else:
+        frames = load_scan(
+            source,
+            out_dir=settings.out_path,
+            video_sample_every_s=settings.video_sample_every_s,
+            blur_threshold=settings.blur_threshold,
+            sweep=sweep,
+            angles_csv=angles_csv,
+            max_edge=settings.api_max_edge,
+        )
     _log_resolution_once(frames, settings)
     for frame in frames:
         prepare_frame(frame, settings)
     tiles = [tile for frame in frames for tile in make_tiles(frame, settings)]
-    chosen = detector_lib.resolve_detector(settings, detector)
-    detections = _index_tiles(
-        tiles,
-        settings,
-        client_factory=client_factory,
-        detector=chosen,
-        use_cache=use_cache,
-    )
+    fresh: list[Detection] = []
+    failed: set[str] = set()
+    if tiles:
+        chosen = detector_lib.resolve_detector(settings, detector)
+        fresh, failed = _index_tiles(
+            tiles,
+            settings,
+            client_factory=client_factory,
+            detector=chosen,
+            use_cache=use_cache,
+        )
+    if failed:
+        fresh = [item for item in fresh if item.frame_file not in failed]
+        pending = [item for item in pending if item[0] not in failed]
+    if pending:
+        frame_memories = _remember_frames(frame_memories, pending, fresh)
+    detections = reused + fresh
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     scan_path = source.resolve()
     objects = merge_detections(detections, settings, created_at=created_at)
@@ -71,6 +106,7 @@ def build_catalog(
         created_at=created_at,
         scan_dir=str(scan_path),
         fingerprint=scan_fingerprint(source, settings, sweep=sweep, angles_csv=angles_csv),
+        frames=sorted(frame_memories, key=lambda item: item.source_file),
     )
     write_catalog(catalog, settings.out_path / "catalog.json")
     if save_debug is None:
@@ -223,6 +259,88 @@ def _hash_file(digest, path: Path) -> None:
     digest.update(str(stat.st_mtime_ns).encode("utf-8"))
 
 
+def frame_fingerprint(
+    path: Path,
+    settings: Settings,
+    *,
+    pan: float,
+    tilt: float,
+    timestamp: str | None,
+) -> str:
+    """Identity of one photo plus the settings that change how it is indexed."""
+    digest = hashlib.sha256()
+    digest.update(settings.fast_model.encode("utf-8"))
+    digest.update(settings.image_detail.encode("utf-8"))
+    digest.update(repr(tuple(settings.tile_grid)).encode("utf-8"))
+    digest.update(str(settings.api_max_edge).encode("utf-8"))
+    digest.update(str(settings.max_objects_per_image).encode("utf-8"))
+    digest.update(grok_client.index_prompt(settings.max_objects_per_image).encode("utf-8"))
+    digest.update(repr((pan, tilt, timestamp)).encode("utf-8"))
+    _hash_file(digest, path)
+    return digest.hexdigest()
+
+
+def _load_changed_stills(
+    source: Path,
+    settings: Settings,
+    *,
+    use_cache: bool,
+) -> tuple[list[LoadedFrame], list[Detection], list[FrameMemory], list[tuple[str, str]]]:
+    """Decode and return only stills whose file or angle tag is not already remembered."""
+    meta = still_frame_meta(source)
+    if not meta:
+        raise IngestError(
+            f"No angle-tagged images in {source}. "
+            "Name files pan030_tilt-10.jpg or add manifest.json with file, pan, tilt, timestamp."
+        )
+    stored = _stored_frames(source, settings) if use_cache else {}
+    reused: list[Detection] = []
+    memories: list[FrameMemory] = []
+    pending: list[tuple[str, str]] = []
+    changed_meta = []
+    for path, pan, tilt, timestamp in meta:
+        fingerprint = frame_fingerprint(path, settings, pan=pan, tilt=tilt, timestamp=timestamp)
+        previous = stored.get(path.name)
+        if previous is not None and previous.fingerprint == fingerprint:
+            reused.extend(previous.detections)
+            memories.append(previous)
+            continue
+        pending.append((path.name, fingerprint))
+        changed_meta.append((path, pan, tilt, timestamp))
+    frames = load_still_frames(changed_meta, settings.api_max_edge) if changed_meta else []
+    logger.info("frame memory reused=%s indexing=%s", len(memories), len(changed_meta))
+    return frames, reused, memories, pending
+
+
+def _stored_frames(source: Path, settings: Settings) -> dict[str, FrameMemory]:
+    catalog = _read_catalog(settings.out_path / "catalog.json")
+    if catalog is None or not catalog.scan_dir:
+        return {}
+    if Path(catalog.scan_dir) != source.resolve():
+        return {}
+    return {item.source_file: item for item in catalog.frames}
+
+
+def _remember_frames(
+    memories: list[FrameMemory],
+    pending: list[tuple[str, str]],
+    detections: list[Detection],
+) -> list[FrameMemory]:
+    by_file: dict[str, list[Detection]] = {}
+    for detection in detections:
+        by_file.setdefault(detection.frame_file, []).append(detection)
+    remembered = list(memories)
+    for name, fingerprint in pending:
+        remembered.append(
+            FrameMemory(
+                source_file=name,
+                fingerprint=fingerprint,
+                detections=by_file.get(name, []),
+            )
+        )
+    return remembered
+
+
 def _read_catalog(path: Path) -> Catalog | None:
     try:
         return Catalog.model_validate_json(path.read_text(encoding="utf-8"))
@@ -231,33 +349,45 @@ def _read_catalog(path: Path) -> Catalog | None:
         return None
 
 
-def _index_tiles(tiles, settings, *, client_factory, detector, use_cache: bool) -> list[Detection]:
+def _index_tiles(
+    tiles, settings, *, client_factory, detector, use_cache: bool
+) -> tuple[list[Detection], set[str]]:
     if not tiles:
-        return []
+        return [], set()
     workers = min(settings.max_concurrency, len(tiles))
     detections: list[Detection] = []
+    failed: set[str] = set()
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [
             pool.submit(_safe_index_tile, tile, settings, client_factory, detector, use_cache)
             for tile in tiles
         ]
         for future in futures:
-            detections.extend(future.result())
-    return detections
+            frame_file, found, ok = future.result()
+            if ok:
+                detections.extend(found)
+            else:
+                failed.add(frame_file)
+    if failed:
+        detections = [item for item in detections if item.frame_file not in failed]
+    return detections, failed
 
 
-def _safe_index_tile(tile: Tile, settings, client_factory, detector, use_cache: bool) -> list[Detection]:
+def _safe_index_tile(
+    tile: Tile, settings, client_factory, detector, use_cache: bool
+) -> tuple[str, list[Detection], bool]:
+    frame_file = tile.frame.source_file
     try:
-        return _index_tile(tile, settings, client_factory, detector, use_cache)
+        return frame_file, _index_tile(tile, settings, client_factory, detector, use_cache), True
     except GrokCallError as exc:
         logger.warning(
             "skipping tile %s offset=%s,%s error=%s",
-            tile.frame.source_file,
+            frame_file,
             tile.offset_x,
             tile.offset_y,
             redact(str(exc)),
         )
-        return []
+        return frame_file, [], False
 
 
 def _index_tile(tile: Tile, settings, client_factory, detector, use_cache: bool) -> list[Detection]:

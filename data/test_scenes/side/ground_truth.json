@@ -1,0 +1,29 @@
+{
+  "note": "Hand estimates from the pan/tilt filenames and the photos, not surveyed angles. An object near the middle of a frame uses that frame's pan as azimuth and tilt 0 as the starting elevation. An object clearly left, right, above, or below center is shifted by a rough fraction of the configured 70 degree horizontal and 55 degree vertical fields of view. describe, index, and ask do not read this file.",
+  "queries": [
+    {
+      "query": "where is the open laptop?",
+      "expected_label": "open laptop",
+      "az": 0,
+      "el": -8
+    },
+    {
+      "query": "where is the water bottle?",
+      "expected_label": "water bottle",
+      "az": 36,
+      "el": -1
+    },
+    {
+      "query": "where is the Coca-Cola can?",
+      "expected_label": "Coca-Cola can",
+      "az": -26,
+      "el": -6
+    },
+    {
+      "query": "where are the elevator doors?",
+      "expected_label": "elevator",
+      "az": 100,
+      "el": 4
+    }
+  ]
+}

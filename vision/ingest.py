@@ -136,9 +136,10 @@ def load_scan(
     return ingest_directory(path, max_edge=max_edge)
 
 
-def ingest_directory(scan_dir: Path, max_edge: int | None = None) -> list[LoadedFrame]:
+def still_frame_meta(scan_dir: Path) -> list[tuple[Path, float, float, str | None]]:
+    """Angle tags for stills, without decoding the pixels."""
     manifest = _load_manifest(scan_dir / "manifest.json")
-    frames: list[LoadedFrame] = []
+    meta: list[tuple[Path, float, float, str | None]] = []
     images = sorted(
         child
         for child in scan_dir.iterdir()
@@ -147,17 +148,26 @@ def ingest_directory(scan_dir: Path, max_edge: int | None = None) -> list[Loaded
     for image_path in images:
         entry = manifest.get(image_path.name)
         if entry is not None:
-            pan, tilt, timestamp = entry.pan, entry.tilt, entry.timestamp
-        else:
-            parsed = parse_angles_from_name(image_path.name)
-            if parsed is None:
-                logger.warning(
-                    "skipping %s; no pan/tilt in the filename or manifest",
-                    image_path.name,
-                )
-                continue
-            pan, tilt = parsed
-            timestamp = None
+            meta.append((image_path, entry.pan, entry.tilt, entry.timestamp))
+            continue
+        parsed = parse_angles_from_name(image_path.name)
+        if parsed is None:
+            logger.warning(
+                "skipping %s; no pan/tilt in the filename or manifest",
+                image_path.name,
+            )
+            continue
+        meta.append((image_path, parsed[0], parsed[1], None))
+    return meta
+
+
+def load_still_frames(
+    meta: list[tuple[Path, float, float, str | None]],
+    max_edge: int | None = None,
+) -> list[LoadedFrame]:
+    """Decode the listed stills. Callers pass only the files that need indexing."""
+    frames: list[LoadedFrame] = []
+    for image_path, pan, tilt, timestamp in meta:
         image, full_w, full_h = load_working_image(image_path, max_edge)
         frames.append(
             LoadedFrame(
@@ -171,6 +181,11 @@ def ingest_directory(scan_dir: Path, max_edge: int | None = None) -> list[Loaded
                 full_height=full_h,
             )
         )
+    return frames
+
+
+def ingest_directory(scan_dir: Path, max_edge: int | None = None) -> list[LoadedFrame]:
+    frames = load_still_frames(still_frame_meta(scan_dir), max_edge)
     if not frames:
         raise IngestError(
             f"No angle-tagged images in {scan_dir}. "
