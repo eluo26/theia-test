@@ -9,6 +9,10 @@ data/cache/*
 data/out/*
 !data/out/.gitkeep
 
+# DroidCam shots from the local test page
+data/test_scenes/droidcam/*
+!data/test_scenes/droidcam/.gitkeep
+
 # Large test media
 *.mp4
 *.mov
