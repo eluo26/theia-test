@@ -64,17 +64,6 @@ def test_answer_fires_only_when_the_query_is_found(tmp_path, monkeypatch):
 
     def fake_text(prompt, settings, *, response_model, model, **kwargs):
         decisions.append(prompt)
-        if len(decisions) == 1:
-            return (
-                QueryDecision(
-                    status="found",
-                    object_id="obj_001",
-                    confidence=0.9,
-                    reason="The laptop",
-                    candidates=[],
-                ),
-                "miss",
-            )
         return (
             QueryDecision(
                 status="ambiguous",

@@ -41,6 +41,8 @@ Use JPEG from the phone's main lens. HEIC files are ignored. `manifest.json` and
 
 Replace `<scene>` with the folder you added, and ask about an object that is actually in those photos. `check-config` prints `present` or `missing`. It does not print the key. A later ask reuses `data/out/catalog.json` when those photos have not changed. Add `--debug` on `index` or `ask` when you want box images under `data/out/debug/`.
 
+A simple question that names a label already in that saved catalog does not call the vision model or the text model. A relational question, such as what is next to or left of something, still calls the text model. The `theia-app` repo is this folder-photo pipeline.
+
 `describe` writes `data/out/<name>.json` and `data/out/<name>_annotated.png`. `ask` prints one JSON object. Azimuth 0 is pan home, positive is right. Elevation 0 is level, positive is up. `range_m` is always null.
 
 Offline check, with the API mocked:
