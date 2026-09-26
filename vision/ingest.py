@@ -1,7 +1,9 @@
-"""Load angle-tagged stills, or sample a sweep video into frames.
+"""Load stills, or sample a sweep video into frames.
 
 Filenames such as pan060_tilt-10.jpg supply pan and tilt. A manifest.json
-of {file, pan, tilt, timestamp} wins when both are present. Images stay at
+of {file, pan, tilt, timestamp} wins when both are present. Other images
+are sorted by an integer in the name when one exists, otherwise by filename,
+and assigned pan 0, 30, 60, ... with tilt 0. Images stay at
 full resolution.
 
 Video needs either a sidecar CSV (timestamp_s, pan, tilt), interpolated per
@@ -33,6 +35,8 @@ _FRAME_NAME = re.compile(
     r"pan(?P<pan>-?\d+(?:\.\d+)?)_tilt(?P<tilt>-?\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
+_INT_IN_NAME = re.compile(r"\d+")
+_UNTAGGED_PAN_STEP = 30.0
 
 
 class IngestError(ValueError):
@@ -136,29 +140,46 @@ def load_scan(
     return ingest_directory(path, max_edge=max_edge)
 
 
+def _untagged_order_key(path: Path) -> tuple[int, int | str, str]:
+    """Names with no integer stay in filename order ahead of numbered names.
+
+    Numbered names sort by the first integer, so 2.jpg precedes 10.jpg.
+    """
+    name = path.name
+    match = _INT_IN_NAME.search(name)
+    if match is None:
+        return (0, name, name)
+    return (1, int(match.group(0)), name)
+
+
 def still_frame_meta(scan_dir: Path) -> list[tuple[Path, float, float, str | None]]:
     """Angle tags for stills, without decoding the pixels."""
     manifest = _load_manifest(scan_dir / "manifest.json")
-    meta: list[tuple[Path, float, float, str | None]] = []
     images = sorted(
         child
         for child in scan_dir.iterdir()
         if child.is_file() and child.suffix.lower() in _IMAGE_SUFFIXES
     )
+    resolved: dict[Path, tuple[float, float, str | None]] = {}
+    untagged: list[Path] = []
     for image_path in images:
         entry = manifest.get(image_path.name)
         if entry is not None:
-            meta.append((image_path, entry.pan, entry.tilt, entry.timestamp))
+            resolved[image_path] = (entry.pan, entry.tilt, entry.timestamp)
             continue
         parsed = parse_angles_from_name(image_path.name)
-        if parsed is None:
-            logger.warning(
-                "skipping %s; no pan/tilt in the filename or manifest",
-                image_path.name,
-            )
+        if parsed is not None:
+            resolved[image_path] = (parsed[0], parsed[1], None)
             continue
-        meta.append((image_path, parsed[0], parsed[1], None))
-    return meta
+        untagged.append(image_path)
+    for index, image_path in enumerate(sorted(untagged, key=_untagged_order_key)):
+        pan = index * _UNTAGGED_PAN_STEP
+        logger.info("%s assigned pan %s", image_path.name, int(pan))
+        resolved[image_path] = (pan, 0.0, None)
+    return [
+        (image_path, resolved[image_path][0], resolved[image_path][1], resolved[image_path][2])
+        for image_path in images
+    ]
 
 
 def load_still_frames(
@@ -188,8 +209,8 @@ def ingest_directory(scan_dir: Path, max_edge: int | None = None) -> list[Loaded
     frames = load_still_frames(still_frame_meta(scan_dir), max_edge)
     if not frames:
         raise IngestError(
-            f"No angle-tagged images in {scan_dir}. "
-            "Name files pan030_tilt-10.jpg or add manifest.json with file, pan, tilt, timestamp."
+            f"No images in {scan_dir}. "
+            "Add photos, name files pan030_tilt-10.jpg, or add manifest.json with file, pan, tilt, timestamp."
         )
     return frames
 

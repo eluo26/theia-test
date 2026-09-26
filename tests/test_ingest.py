@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 
 import cv2
@@ -20,6 +21,45 @@ def test_filename_angles():
     assert parse_angles_from_name("pan-040_tilt000.png") == (-40.0, 0.0)
     assert parse_angles_from_name("pan000_tilt-015.png") == (0.0, -15.0)
     assert parse_angles_from_name("scene.png") is None
+
+
+def test_untagged_names_take_pan_steps_and_tagged_names_keep_angles(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """a.jpg and b.jpg have no integer, so filename order puts them ahead of 10.jpg.
+
+    10.jpg sorts by that integer after the unnumbered names. pan30_tilt-10.jpg
+    keeps 30 and -10 and does not take a slot in the 0, 30, 60 sequence.
+    """
+    for name in ("b.jpg", "a.jpg", "10.jpg", "pan30_tilt-10.jpg"):
+        Image.new("RGB", (8, 8), (1, 2, 3)).save(tmp_path / name)
+    with caplog.at_level(logging.INFO, logger="vision.ingest"):
+        frames = ingest_directory(tmp_path)
+    by_name = {frame.source_file: frame for frame in frames}
+    assert by_name["a.jpg"].pan_deg == 0
+    assert by_name["a.jpg"].tilt_deg == 0
+    assert by_name["b.jpg"].pan_deg == 30
+    assert by_name["b.jpg"].tilt_deg == 0
+    assert by_name["10.jpg"].pan_deg == 60
+    assert by_name["10.jpg"].tilt_deg == 0
+    assert by_name["pan30_tilt-10.jpg"].pan_deg == 30
+    assert by_name["pan30_tilt-10.jpg"].tilt_deg == -10
+    logged = {record.getMessage() for record in caplog.records}
+    assert "a.jpg assigned pan 0" in logged
+    assert "b.jpg assigned pan 30" in logged
+    assert "10.jpg assigned pan 60" in logged
+    assert not any("pan30_tilt-10.jpg" in message for message in logged)
+
+
+def test_numbered_untagged_names_sort_by_integer(tmp_path: Path):
+    for name in ("10.jpg", "2.jpg"):
+        Image.new("RGB", (8, 8), (4, 5, 6)).save(tmp_path / name)
+    frames = ingest_directory(tmp_path)
+    by_name = {frame.source_file: frame for frame in frames}
+    assert by_name["2.jpg"].pan_deg == 0
+    assert by_name["10.jpg"].pan_deg == 30
+    assert by_name["2.jpg"].tilt_deg == 0
+    assert by_name["10.jpg"].tilt_deg == 0
 
 
 def test_manifest_wins_over_the_filename(tmp_path: Path):

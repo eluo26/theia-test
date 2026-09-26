@@ -290,8 +290,8 @@ def _load_changed_stills(
     meta = still_frame_meta(source)
     if not meta:
         raise IngestError(
-            f"No angle-tagged images in {source}. "
-            "Name files pan030_tilt-10.jpg or add manifest.json with file, pan, tilt, timestamp."
+            f"No images in {source}. "
+            "Add photos, name files pan030_tilt-10.jpg, or add manifest.json with file, pan, tilt, timestamp."
         )
     stored = _stored_frames(source, settings) if use_cache else {}
     reused: list[Detection] = []
