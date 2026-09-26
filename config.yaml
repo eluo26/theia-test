@@ -1,0 +1,68 @@
+# Vision module configuration.
+# Model ids were read from the xAI docs on 2026-09-26. Confirm them before the demo.
+# https://docs.x.ai/developers/models
+# https://docs.x.ai/developers/models/grok-4.3
+# https://docs.x.ai/developers/models/grok-4.7
+# If a call fails, fix these values from the docs. Do not invent a replacement id in code.
+
+# grok-4.3: text and image input, structured outputs. The docs describe it as the
+# fast model, and the older grok-4-fast aliases resolve to it.
+grok_fast_model: grok-4.3
+
+# grok-4.7: text and image input, structured outputs, reasoning default "high".
+grok_reasoning_model: grok-4.7
+
+# OpenAI-compatible base URL from the xAI docs.
+xai_base_url: https://api.x.ai/v1
+
+# Chat Completions image detail. Documented values: auto, low, high.
+# https://docs.x.ai/developers/model-capabilities/legacy/chat-completions
+image_detail: high
+
+# Client timeout in seconds. The chat completions examples use a long timeout
+# because reasoning models can think for a while.
+# https://docs.x.ai/developers/model-capabilities/legacy/chat-completions
+request_timeout_s: 3600
+
+# Documented image input limit: 20MiB. jpg, jpeg, and png only.
+max_image_bytes: 20971520
+
+# Camera. Replace width, height, and FOV after you measure the real lens.
+# These placeholders are not used until geometry lands in a later milestone.
+# Optional fx, fy, cx, cy and dist_coeffs override the FOV when set.
+image_width: 4032
+image_height: 3024
+hfov_deg: 70
+vfov_deg: 55
+fx: null
+fy: null
+cx: null
+cy: null
+dist_coeffs: null
+
+# Used by later milestones. Loaded now so the config file matches the plan.
+tile_grid: [2, 2]
+tile_overlap: 0.15
+max_concurrency: 4
+refine_iou: 0.3
+label_sim: 85
+merge_deg: 8
+video_sample_every_s: 0.5
+blur_threshold: 100
+crop_pad: 0.15
+clinic_mode: false
+
+# Local open-vocabulary detector. Swappable. Weights download on first use (later milestone).
+detector: owlv2
+owlv2_model: google/owlv2-base-patch16-ensemble
+grounding_dino_model: IDEA-Research/grounding-dino-tiny
+
+cache_dir: data/cache
+out_dir: data/out
+
+# Client retry policy. These are not xAI API parameters.
+# Transport retries cover connection failures, timeouts, and HTTP 408/429/5xx.
+# HTTP 400 and 401 are not retried. Validation retries cover schema mismatches.
+max_transport_retries: 3
+retry_base_delay_s: 1.0
+validation_retries: 1

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Block commits that stage env files or xAI API key-like strings.
+set -euo pipefail
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [[ -z "$staged" ]]; then
+  exit 0
+fi
+
+while IFS= read -r file; do
+  base="$(basename "$file")"
+  if [[ "$base" == .env || "$base" == .env.* ]]; then
+    if [[ "$base" != .env.example ]]; then
+      echo "Refusing commit: ${file} is an env file."
+      echo "Keep the key in .env (gitignored). Commit only .env.example."
+      exit 1
+    fi
+  fi
+done <<< "$staged"
+
+# Added lines only. A real key starts with xai- plus a long token.
+if git diff --cached --diff-filter=ACMR -U0 -- . \
+  | grep -E '^\+' \
+  | grep -E 'xai-[A-Za-z0-9]{10,}'
+then
+  echo "Refusing commit: staged content contains an xAI API key-like string."
+  echo "If this is a real key, revoke it at https://console.x.ai and create a new one."
+  echo "Deleting the line locally is not enough once it has been pushed."
+  exit 1
+fi
+
+exit 0

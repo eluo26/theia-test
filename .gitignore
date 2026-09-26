@@ -1,0 +1,39 @@
+# Secrets. Commit .env.example only.
+.env
+.env.*
+!.env.example
+
+# Generated caches and debug output
+data/cache/*
+!data/cache/.gitkeep
+data/out/*
+!data/out/.gitkeep
+
+# Large test media
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Model weight caches (detector downloads, Hugging Face, torch)
+.cache/
+models/
+**/.cache/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+
+# Local tool scratch
+agent-tools/
+*.tmp

@@ -1,0 +1,308 @@
+"""xAI vision calls through the OpenAI-compatible Chat Completions API.
+
+Model ids, the base URL, image detail, and the timeout come from config.yaml.
+This module does not substitute a different model when a call fails.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import logging
+import re
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import httpx
+from openai import OpenAI
+from pydantic import ValidationError
+
+from vision.config import Settings, require_api_key
+from vision.schemas import IndexResponse
+
+logger = logging.getLogger("vision.grok")
+
+DOCS = (
+    "https://docs.x.ai/developers/models",
+    "https://docs.x.ai/developers/model-capabilities/text/structured-outputs",
+    "https://docs.x.ai/developers/model-capabilities/legacy/chat-completions",
+)
+
+INDEX_PROMPT = """You are the scene-understanding module for a tabletop laser turret.
+List every distinct physical object that is visible. Skip the empty wall, floor, and bare tabletop.
+
+For each object provide:
+- label: a short noun phrase, such as "blue water bottle"
+- description: color, brand, any readable text, and neighboring objects
+- box: a tight bounding box as [x1, y1, x2, y2], normalized from 0 to 1000, origin at the top-left
+- count: how many of that same object sit inside the box
+- drug_name: the medication name if the object is a drug package, otherwise null
+- expiry_text: any visible expiry date text, otherwise null
+
+Only include objects you can actually see. Do not invent hidden items.
+"""
+
+_KEY_PATTERN = re.compile(r"xai-[A-Za-z0-9_\-]{8,}")
+_ALLOWED_SUFFIXES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+_RETRIABLE_STATUS = {408, 409, 429, 500, 502, 503, 504}
+
+
+class GrokCallError(RuntimeError):
+    """The xAI call failed, or the response did not match the schema."""
+
+
+def redact(text: str) -> str:
+    """Remove API-key-like strings from text that might be logged or raised."""
+    redacted = _KEY_PATTERN.sub("[REDACTED]", text)
+    return redacted
+
+
+def response_cache_key(
+    *, image_bytes: bytes, prompt: str, model: str, image_detail: str
+) -> str:
+    """SHA-256 of the image, prompt, model, and image detail.
+
+    Image detail is included so a config change does not reuse boxes from a
+    different detail level. The plan's key is image bytes + prompt + model.
+    """
+    digest = hashlib.sha256()
+    digest.update(image_bytes)
+    digest.update(b"\0")
+    digest.update(prompt.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(model.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(image_detail.encode("utf-8"))
+    return digest.hexdigest()
+
+
+def describe_image(
+    image_path: Path,
+    settings: Settings,
+    *,
+    client_factory: Callable[..., Any] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    use_cache: bool = True,
+) -> tuple[IndexResponse, str]:
+    """Ask Grok to list objects in one image. Returns the parsed response and cache status."""
+    path = Path(image_path)
+    image_bytes, mime = _load_image_bytes(path, settings)
+    model = settings.grok_fast_model
+    prompt = INDEX_PROMPT
+    key = response_cache_key(
+        image_bytes=image_bytes,
+        prompt=prompt,
+        model=model,
+        image_detail=settings.image_detail,
+    )
+    cache_file = settings.cache_path / f"{key}.json"
+
+    if use_cache:
+        cached = _read_cache(cache_file, model)
+        if cached is not None:
+            logger.info(
+                "grok response model=%s latency_ms=0 cache=hit validation=passed",
+                model,
+            )
+            return cached, "hit"
+
+    api_key = require_api_key()
+    factory = client_factory or _default_client
+    client = factory(
+        api_key=api_key,
+        base_url=settings.xai_base_url,
+        timeout=httpx.Timeout(settings.request_timeout_s),
+        max_retries=0,
+    )
+    messages = _messages(prompt, image_bytes, mime, settings.image_detail)
+
+    attempts = settings.validation_retries + 1
+    last_error = "response did not match the schema"
+    for attempt in range(1, attempts + 1):
+        started = time.perf_counter()
+        try:
+            completion = _call_with_transport_retries(
+                client, model, messages, settings, sleeper
+            )
+            parsed = _parse_completion(completion)
+        except GrokCallError:
+            raise
+        except (ValidationError, ValueError, json.JSONDecodeError) as exc:
+            last_error = redact(str(exc))
+            latency_ms = (time.perf_counter() - started) * 1000
+            logger.warning(
+                "grok response model=%s latency_ms=%.0f cache=miss validation=failed attempt=%s error=%s",
+                model,
+                latency_ms,
+                attempt,
+                last_error,
+            )
+            if attempt == attempts:
+                break
+            continue
+        else:
+            latency_ms = (time.perf_counter() - started) * 1000
+            logger.info(
+                "grok response model=%s latency_ms=%.0f cache=miss validation=passed",
+                model,
+                latency_ms,
+            )
+            if use_cache:
+                _write_cache(cache_file, model, parsed)
+            return parsed, "miss"
+
+    raise GrokCallError(
+        "Grok returned a response that failed schema validation "
+        f"{attempts} time(s) for model {model!r}. The image was skipped. "
+        f"Last error: {last_error}"
+    )
+
+
+def _default_client(**kwargs: Any) -> OpenAI:
+    return OpenAI(**kwargs)
+
+
+def _load_image_bytes(path: Path, settings: Settings) -> tuple[bytes, str]:
+    if not path.is_file():
+        raise GrokCallError(f"Image not found: {path}")
+    suffix = path.suffix.lower()
+    mime = _ALLOWED_SUFFIXES.get(suffix)
+    if mime is None:
+        allowed = ", ".join(sorted(_ALLOWED_SUFFIXES))
+        raise GrokCallError(
+            f"Unsupported image type {suffix!r}. The xAI image docs allow {allowed} only: {DOCS[2]}"
+        )
+    image_bytes = path.read_bytes()
+    if len(image_bytes) > settings.max_image_bytes:
+        raise GrokCallError(
+            f"Image is {len(image_bytes)} bytes, above the configured limit of "
+            f"{settings.max_image_bytes} bytes ({DOCS[2]})."
+        )
+    if not image_bytes:
+        raise GrokCallError(f"Image file is empty: {path}")
+    return image_bytes, mime
+
+
+def _messages(prompt: str, image_bytes: bytes, mime: str, detail: str) -> list[dict[str, Any]]:
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime};base64,{encoded}",
+                        "detail": detail,
+                    },
+                },
+                {"type": "text", "text": prompt},
+            ],
+        }
+    ]
+
+
+def _call_with_transport_retries(
+    client: Any,
+    model: str,
+    messages: list[dict[str, Any]],
+    settings: Settings,
+    sleeper: Callable[[float], None],
+) -> Any:
+    attempts = settings.max_transport_retries + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return client.beta.chat.completions.parse(
+                model=model,
+                messages=messages,
+                response_format=IndexResponse,
+            )
+        except (ValidationError, ValueError, json.JSONDecodeError):
+            raise
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status in {400}:
+                raise GrokCallError(_docs_error(model, status, exc)) from exc
+            if status in {401, 403}:
+                raise GrokCallError(
+                    f"xAI rejected the API key (HTTP {status}). "
+                    "Check XAI_API_KEY in .env. If the key leaked, revoke it at "
+                    "https://console.x.ai and create a new one. "
+                    f"Details: {redact(str(exc))}"
+                ) from exc
+            retriable = status in _RETRIABLE_STATUS or type(exc).__name__ in {
+                "APIConnectionError",
+                "APITimeoutError",
+                "RateLimitError",
+            }
+            if not retriable or attempt == attempts:
+                raise GrokCallError(_docs_error(model, status, exc)) from exc
+            delay = settings.retry_base_delay_s * (2 ** (attempt - 1))
+            logger.warning(
+                "grok transport retry model=%s attempt=%s delay_s=%s error=%s",
+                model,
+                attempt,
+                delay,
+                redact(f"{type(exc).__name__}: {exc}"),
+            )
+            sleeper(delay)
+    raise GrokCallError(_docs_error(model, None, RuntimeError("retries exhausted")))
+
+
+def _docs_error(model: str, status: int | None, exc: BaseException) -> str:
+    status_text = f"HTTP {status}" if status is not None else type(exc).__name__
+    links = " ".join(DOCS)
+    return (
+        f"xAI API call failed ({status_text}) for model {model!r}. "
+        "Check the current vision model names and Chat Completions parameters in the docs "
+        f"instead of changing the model in code: {links}. "
+        f"Details: {redact(str(exc))}"
+    )
+
+
+def _parse_completion(completion: Any) -> IndexResponse:
+    choices = getattr(completion, "choices", None)
+    if not choices:
+        raise ValueError("response had no choices")
+    message = choices[0].message
+    refusal = getattr(message, "refusal", None)
+    if refusal:
+        raise ValueError(f"model refusal: {refusal}")
+    parsed = getattr(message, "parsed", None)
+    if isinstance(parsed, IndexResponse):
+        return parsed
+    if parsed is not None:
+        return IndexResponse.model_validate(parsed)
+    content = getattr(message, "content", None)
+    if not content:
+        raise ValueError("response content was empty")
+    return IndexResponse.model_validate_json(content)
+
+
+def _read_cache(path: Path, model: str) -> IndexResponse | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("model") != model:
+            logger.warning("cache entry model mismatch path=%s; ignoring", path.name)
+            return None
+        return IndexResponse.model_validate(payload["response"])
+    except (OSError, json.JSONDecodeError, ValidationError, KeyError, TypeError) as exc:
+        logger.warning(
+            "cache entry failed validation path=%s error=%s; ignoring",
+            path.name,
+            redact(str(exc)),
+        )
+        return None
+
+
+def _write_cache(path: Path, model: str, response: IndexResponse) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"model": model, "response": response.model_dump()}
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    temporary.replace(path)
