@@ -1,0 +1,41 @@
+{
+  "note": "Synthetic fixture angles for the desk scene. Not a Grok response.",
+  "frames": [
+    {
+      "file": "pan-040_tilt000.png",
+      "pan": -40,
+      "tilt": 0,
+      "timestamp": "2026-09-26T15:40:00"
+    },
+    {
+      "file": "pan-020_tilt000.png",
+      "pan": -20,
+      "tilt": 0,
+      "timestamp": "2026-09-26T15:40:00"
+    },
+    {
+      "file": "pan000_tilt000.png",
+      "pan": 0,
+      "tilt": 0,
+      "timestamp": "2026-09-26T15:40:00"
+    },
+    {
+      "file": "pan020_tilt000.png",
+      "pan": 20,
+      "tilt": 0,
+      "timestamp": "2026-09-26T15:40:00"
+    },
+    {
+      "file": "pan040_tilt000.png",
+      "pan": 40,
+      "tilt": 0,
+      "timestamp": "2026-09-26T15:40:00"
+    },
+    {
+      "file": "pan000_tilt-015.png",
+      "pan": 0,
+      "tilt": -15,
+      "timestamp": "2026-09-26T15:40:00"
+    }
+  ]
+}

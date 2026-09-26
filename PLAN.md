@@ -2,7 +2,7 @@
 
 Python package for a HackGT laser-pointing turret. Grok (xAI, OpenAI-compatible base URL `https://api.x.ai/v1`) does scene understanding, and a local open-vocabulary detector tightens boxes in a later milestone. No web framework. The command line is `python -m vision.cli`.
 
-This file is the spec for milestones M1–M6. M1 is implemented. Do not start M2 until M1 is accepted.
+This file is the spec for milestones M1–M6. M1 through M6 are implemented. The operator guide is README.md. The geometry below is the full pinhole rotation in `vision/geometry.py`, not a small-angle fraction of the FOV.
 
 Model ids live only in `config.yaml`. Chosen from the xAI docs on 2026-09-26:
 
@@ -21,7 +21,7 @@ The vision call uses the OpenAI SDK: `client.beta.chat.completions.parse` with `
 - `bbox_px` is that box in full-frame pixels after any tile is mapped back (tile mapping is M3).
 - `pan_deg` and `tilt_deg` are the turret angles of the capture, in degrees. Filenames may encode them (`pan030_tilt-10.jpg`).
 - `azimuth_deg` and `elevation_deg` are where to point the laser, in degrees. Positive azimuth is to the right of the turret zero. Positive elevation is up. Because image Y grows downward, a pixel below the principal point contributes a negative elevation offset.
-- Geometry (M4): with only the FOV, the object center's horizontal fraction of `hfov_deg` is added to `pan_deg`, and the vertical fraction of `vfov_deg` is applied to `tilt_deg` with image-down as negative elevation. When `fx`, `fy`, `cx`, and `cy` are set, they override that FOV model. `dist_coeffs`, when set, undistort the pixel before the conversion.
+- Geometry: box center `(u, v)`. Intrinsics from calibration when `fx`, `fy`, `cx`, and `cy` are set, otherwise `fx = (W/2)/tan(hfov/2)`, `fy = (H/2)/tan(vfov/2)`, `cx = W/2`, `cy = H/2`. Camera ray `d = [(u-cx)/fx, -(v-cy)/fy, 1]` (x right, y up, z forward). Rotate by tilt about x, then pan about vertical. `az = atan2(dx, dz)`, `el = atan2(dy, sqrt(dx^2+dz^2))`. Full rotation, not a small-angle model. `dist_coeffs` with a complete intrinsic set undistorts before tiling.
 - `range_m` is always null. This module does not estimate distance.
 
 ## JSON contract
@@ -96,7 +96,7 @@ Internal models already defined for later milestones, so the contract does not d
 
 ### M1 — Config, secrets, one Grok call
 
-Implemented. Stop here.
+Implemented.
 
 - `config.yaml` loaded by Pydantic. Unknown keys and invalid values fail with the field name. Model ids have no defaults in Python.
 - `.env` loading, `.gitignore`, `.env.example`, and the pre-commit hook.
@@ -108,7 +108,7 @@ Implemented. Stop here.
 
 ### M2 — Ingest
 
-Not started.
+Implemented in `vision/ingest.py`. Video uses `--sweep` or a `timestamp_s,pan,tilt` CSV. Soft frames are dropped. The sharpest frame in each 1-degree bucket is kept.
 
 - Read angle-tagged stills from `data/test_scenes/` into `Frame` records. Pan and tilt come from a sidecar or from the filename.
 - Optional video: sample a frame every `video_sample_every_s` (0.5 s). Drop frames whose blur score is below `blur_threshold` (variance of Laplacian, threshold 100).
@@ -116,7 +116,7 @@ Not started.
 
 ### M3 — Tiled indexing
 
-Not started.
+Implemented. `tile_grid` is `[columns, rows]`. Tile failures are logged and skipped.
 
 - Split each frame into `tile_grid` (`[nx, ny]`, columns then rows) with `tile_overlap` (fraction of the tile shared with its neighbor).
 - Call `grok_fast_model` on each tile, at most `max_concurrency` calls at once. Same prompt and schema as M1.
@@ -125,7 +125,7 @@ Not started.
 
 ### M4 — Camera geometry
 
-Not started.
+Implemented in `vision/geometry.py`. `range_m` stays null.
 
 - Fill `azimuth_deg` and `elevation_deg` from pan, tilt, and the box center, using the coordinate convention above.
 - `image_width`, `image_height`, `hfov_deg`, and `vfov_deg` in `config.yaml` are placeholders until a human measures the lens. Optional `fx`, `fy`, `cx`, `cy`, and `dist_coeffs` override the FOV model.
@@ -133,20 +133,19 @@ Not started.
 
 ### M5 — Detector refinement and catalog
 
-Not started.
+Implemented.
 
-- Local open-vocabulary detector selected by `detector`: `owlv2` (`owlv2_model`) or `grounding_dino` (`grounding_dino_model`). Add torch and transformers here. The first run downloads the weights (on the order of 1 GB) into a gitignored cache.
-- Run the detector on a crop of each Grok box expanded by `crop_pad`. Keep the tighter box when its IoU with the Grok box is at least `refine_iou`. Record `box_source` as `grok` or `detector`. Draw detector boxes in a color other than the M1 green.
-- Dedupe observations into `Catalog` when label similarity (0–100) is at least `label_sim` and the angular separation is at most `merge_deg`. Write `data/out/catalog.json`.
-- `clinic_mode`: when true, medication packages stay first-class in the catalog (`drug_name`, `expiry_text`). The M1 prompt already asks for those fields.
+- Local open-vocabulary detector selected by `detector`: `owlv2` (`owlv2_model`) or `grounding_dino` (`grounding_dino_model`). Torch and transformers are in `requirements-detector.txt`. The first run downloads about 1 GB of weights into a gitignored cache. Tests inject a fake detector.
+- For each Grok detection, the detector runs on the tile with the label as the text query. If IoU is at least `refine_iou`, the detector box is used (`box_source` `detector`). Otherwise the Grok box is kept at lower confidence. Debug images draw detector boxes in blue.
+- Dedupe when the rapidfuzz token ratio is at least `label_sim` and the angular separation is at most `merge_deg`. The representative is the member closest to its frame center. Write `data/out/catalog.json`.
+- `clinic_mode` fuzzy-matches `drug_name` against `data/inventory.json` at query time and attaches the match to metadata.
 
 ### M6 — Query
 
-Not started.
+Implemented. `locate(query, catalog)` sends catalog text (id, label, description, count, drug name) to `grok_reasoning_model`, then crops the chosen frame with `crop_pad`, asks for a tight box, and runs the detector on the crop. The tighter agreeing box is mapped back and azimuth/elevation are recomputed.
 
-- `locate(query)` sends the catalog, and any needed crop, to `grok_reasoning_model` and returns `QueryResult`.
 - `found` when one object wins. `ambiguous` with `candidates` when more than one is plausible. `not_found` with a `reason` when nothing matches.
-- `range_m` remains null. A CLI command can print the JSON for the turret teammate. Still no web framework.
+- `range_m` remains null. `python -m vision.cli ask` prints the JSON. `python -m vision.cli eval` reports correct-object rate and mean angular error. Still no web framework.
 
 ## [HUMAN]
 

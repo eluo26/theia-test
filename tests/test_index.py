@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from vision.config import load_settings
@@ -135,7 +136,8 @@ def test_build_catalog_merges_two_views_and_writes_json(tmp_path, monkeypatch):
     catalog = build_catalog(tmp_path, settings=settings, detector=NullDetector())
     assert len(catalog.objects) == 1
     assert catalog.objects[0].object_id == "obj_001"
-    assert catalog.objects[0].azimuth_deg == pytest_approx(11, 2)
+    assert catalog.objects[0].azimuth_deg == pytest.approx(10.0, abs=1e-6)
+    assert catalog.objects[0].elevation_deg == pytest.approx(0.0, abs=1e-6)
     written = json.loads((tmp_path / "out" / "catalog.json").read_text(encoding="utf-8"))
     assert written["objects"][0]["label"] == "blue water bottle"
     assert (tmp_path / "out" / "debug" / "pan010_tilt000.png").is_file()
@@ -175,19 +177,6 @@ def test_detector_box_is_kept_when_iou_is_high(tmp_path, monkeypatch):
     assert obj.confidence == 0.91
     assert obj.bbox_px == [20, 16, 80, 64]
     assert detector.calls == ["green mug"]
-
-
-def pytest_approx(value, tolerance):
-    return Approx(value, tolerance)
-
-
-class Approx:
-    def __init__(self, value, tolerance):
-        self.value = value
-        self.tolerance = tolerance
-
-    def __eq__(self, other):
-        return abs(other - self.value) <= self.tolerance
 
 
 def test_invalid_tile_is_skipped(tmp_path, monkeypatch, caplog):

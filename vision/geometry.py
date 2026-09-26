@@ -112,8 +112,12 @@ def angular_distance_deg(azimuth_a: float, elevation_a: float, azimuth_b: float,
     """Angle between two turret directions, in degrees."""
     first = _direction(azimuth_a, elevation_a)
     second = _direction(azimuth_b, elevation_b)
-    dot = max(-1.0, min(1.0, first[0] * second[0] + first[1] * second[1] + first[2] * second[2]))
-    return math.degrees(math.acos(dot))
+    dot = first[0] * second[0] + first[1] * second[1] + first[2] * second[2]
+    if dot >= 1.0 - 1e-12:
+        return 0.0
+    if dot <= -1.0:
+        return 180.0
+    return math.degrees(math.acos(max(-1.0, dot)))
 
 
 def camera_ray_to_world(

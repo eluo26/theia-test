@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from PIL import Image
+
+from vision.grok_client import parse_text
 
 from vision.config import load_settings
 from vision.detector import DetectorHit, NullDetector, ScriptedDetector
@@ -84,7 +87,6 @@ def test_locate_returns_the_json_contract(tmp_path, monkeypatch):
     def fake_image(image_bytes, mime, settings, *, prompt, response_model, model, **kwargs):
         assert response_model is VerifyResponse
         assert model == settings.grok_fast_model
-        assert kwargs.get("client_factory") is None or True
         assert "reasoning_effort" not in kwargs
         return (
             VerifyResponse(is_match=True, box=[115, 115, 885, 885], reason="Yes, tight box."),
@@ -190,10 +192,49 @@ def test_tighter_detector_box_on_the_crop(tmp_path, monkeypatch):
     # A tight detector box around the original object is smaller than the full crop.
     detector = ScriptedDetector({"blue water bottle": [DetectorHit(bbox_px=[6, 6, 46, 46], score=0.88)]})
     result = locate("where is the bottle?", catalog, settings=settings, detector=detector)
-    assert result.box_source if False else result.bbox_px == [80, 30, 120, 70]
+    assert result.bbox_px == [80, 30, 120, 70]
     assert result.range_m is None
     assert result.azimuth_deg == pytest_close(0.0)
     assert result.elevation_deg == pytest_close(0.0)
+
+
+def test_text_query_does_not_send_reasoning_effort(tmp_path, monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
+    settings = _settings(tmp_path)
+    calls = []
+
+    class Completions:
+        def parse(self, **kwargs):
+            calls.append(kwargs)
+            message = SimpleNamespace(
+                parsed=QueryDecision(
+                    status="not_found",
+                    object_id=None,
+                    confidence=0.0,
+                    reason="none",
+                    candidates=[],
+                ),
+                content=None,
+                refusal=None,
+            )
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    def factory(**kwargs):
+        chat = SimpleNamespace(completions=Completions())
+        return SimpleNamespace(beta=SimpleNamespace(chat=chat))
+
+    parse_text(
+        "where is it?",
+        settings,
+        response_model=QueryDecision,
+        model=settings.grok_reasoning_model,
+        client_factory=factory,
+        use_cache=False,
+    )
+    assert set(calls[0]) == {"model", "messages", "response_format"}
+    assert calls[0]["model"] == settings.grok_reasoning_model
+    assert calls[0]["response_format"] is QueryDecision
+    assert isinstance(calls[0]["messages"][0]["content"], str)
 
 
 def pytest_close(value, tolerance=1e-6):

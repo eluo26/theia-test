@@ -43,7 +43,7 @@ def test_sharpest_frame_in_each_bucket_drops_blur():
     samples = [
         SampledFrame(0.0, 10.2, 0.0, flat, sharpness=0.0),
         SampledFrame(0.5, 10.4, 0.2, sharp, sharpness=50.0),
-        SampledFrame(1.0, 10.6, -0.2, sharp, sharpness=80.0),
+        SampledFrame(1.0, 10.3, -0.2, sharp, sharpness=80.0),
         SampledFrame(1.5, 14.0, 0.0, sharp, sharpness=40.0),
     ]
     kept = keep_sharpest_per_bucket(samples, blur_threshold=30)
@@ -51,6 +51,33 @@ def test_sharpest_frame_in_each_bucket_drops_blur():
     by_pan = {round(sample.pan_deg): sample for sample in kept}
     assert by_pan[10].sharpness == 80.0
     assert by_pan[14].sharpness == 40.0
+
+
+def test_video_csv_interpolates_angles(tmp_path: Path):
+    path = tmp_path / "sweep.avi"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10, (64, 48))
+    if not writer.isOpened():
+        pytest.skip("MJPG video writer is not available")
+    for _ in range(10):
+        frame = np.full((48, 64, 3), 20, np.uint8)
+        frame[8:40, 8:56] = 255
+        writer.write(frame)
+    writer.release()
+    csv_path = tmp_path / "angles.csv"
+    csv_path.write_text("timestamp_s,pan,tilt\n0,0,0\n1,20,10\n", encoding="utf-8")
+    frames = ingest_video(
+        path,
+        out_dir=tmp_path / "out",
+        sample_every_s=0.5,
+        blur_threshold=1,
+        sweep=None,
+        angles_csv=csv_path,
+    )
+    by_time = {round(float(frame.timestamp or "0"), 1): frame for frame in frames}
+    assert by_time[0.0].pan_deg == pytest.approx(0.0)
+    assert by_time[0.0].tilt_deg == pytest.approx(0.0)
+    assert by_time[0.5].pan_deg == pytest.approx(10.0)
+    assert by_time[0.5].tilt_deg == pytest.approx(5.0)
 
 
 def test_video_sweep_assigns_pan_and_drops_a_flat_frame(tmp_path: Path):
