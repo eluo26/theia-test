@@ -81,6 +81,7 @@ class Detection(BaseModel):
     label: str
     description: str
     bbox_px: list[int] = Field(min_length=4, max_length=4)
+    grok_bbox_px: list[int] | None = None
     count: int = Field(ge=1)
     drug_name: str | None = None
     expiry_text: str | None = None
@@ -91,6 +92,9 @@ class Detection(BaseModel):
     tilt_deg: float
     azimuth_deg: float | None = None
     elevation_deg: float | None = None
+    image_width: int = Field(gt=0)
+    image_height: int = Field(gt=0)
+    timestamp: str | None = None
 
 
 class CatalogObject(BaseModel):
@@ -109,16 +113,23 @@ class CatalogObject(BaseModel):
     confidence: float = Field(ge=0, le=1)
     frame_file: str
     bbox_px: list[int] = Field(min_length=4, max_length=4)
+    grok_bbox_px: list[int] | None = None
+    box_source: Literal["grok", "detector"] = "grok"
     last_seen: str | None = None
+    pan_deg: float
+    tilt_deg: float
+    image_width: int = Field(gt=0)
+    image_height: int = Field(gt=0)
 
 
 class Catalog(BaseModel):
-    """Written to data/out/catalog.json in a later milestone."""
+    """Written to data/out/catalog.json."""
 
     model_config = ConfigDict(extra="forbid")
 
     objects: list[CatalogObject]
     created_at: str
+    scan_dir: str | None = None
 
 
 class Candidate(BaseModel):
@@ -130,6 +141,18 @@ class Candidate(BaseModel):
     reason: str | None = None
 
 
+class InventoryMatch(BaseModel):
+    """Clinic-closet match against data/inventory.json. Absent outside clinic mode."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    count: int | None = None
+    expiry: str | None = None
+    resource_links: list[str] = Field(default_factory=list)
+    score: float = Field(ge=0, le=100)
+
+
 class ObjectMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -137,6 +160,36 @@ class ObjectMetadata(BaseModel):
     drug_name: str | None = None
     expiry_text: str | None = None
     last_seen: str | None = None
+    inventory: InventoryMatch | None = None
+
+
+class QueryDecision(BaseModel):
+    """Structured answer from the reasoning model. Geometry is filled in afterwards."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["found", "ambiguous", "not_found"]
+    object_id: str | None = None
+    confidence: float = Field(ge=0, le=1)
+    reason: str
+    candidates: list[Candidate] = Field(default_factory=list)
+
+
+class VerifyResponse(BaseModel):
+    """Crop check: is this the object, and where is the tight box on the crop."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    is_match: bool
+    box: list[float] | None = None
+    reason: str
+
+    @field_validator("box")
+    @classmethod
+    def box_in_range(cls, value: list[float] | None) -> list[float] | None:
+        if value is None:
+            return None
+        return _check_norm_box(value)
 
 
 class QueryResult(BaseModel):

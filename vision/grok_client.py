@@ -11,17 +11,21 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 from openai import OpenAI
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from vision.config import Settings, require_api_key
 from vision.schemas import IndexResponse
+
+T = TypeVar("T", bound=BaseModel)
+_cache_lock = threading.Lock()
 
 logger = logging.getLogger("vision.grok")
 
@@ -90,18 +94,96 @@ def describe_image(
     """Ask Grok to list objects in one image. Returns the parsed response and cache status."""
     path = Path(image_path)
     image_bytes, mime = _load_image_bytes(path, settings)
-    model = settings.grok_fast_model
-    prompt = INDEX_PROMPT
+    return parse_image_bytes(
+        image_bytes,
+        mime,
+        settings,
+        prompt=INDEX_PROMPT,
+        response_model=IndexResponse,
+        model=settings.grok_fast_model,
+        client_factory=client_factory,
+        sleeper=sleeper,
+        use_cache=use_cache,
+    )
+
+
+def parse_image_bytes(
+    image_bytes: bytes,
+    mime: str,
+    settings: Settings,
+    *,
+    prompt: str,
+    response_model: type[T],
+    model: str,
+    client_factory: Callable[..., Any] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    use_cache: bool = True,
+) -> tuple[T, str]:
+    """Structured vision call. Cache key is image bytes + prompt + model + detail."""
+    _check_encoded_image(image_bytes, mime, settings)
     key = response_cache_key(
         image_bytes=image_bytes,
         prompt=prompt,
         model=model,
         image_detail=settings.image_detail,
     )
-    cache_file = settings.cache_path / f"{key}.json"
+    messages = _messages(prompt, image_bytes, mime, settings.image_detail)
+    return _run_completion(
+        settings,
+        model=model,
+        messages=messages,
+        response_model=response_model,
+        cache_key=key,
+        client_factory=client_factory,
+        sleeper=sleeper,
+        use_cache=use_cache,
+    )
 
+
+def parse_text(
+    prompt: str,
+    settings: Settings,
+    *,
+    response_model: type[T],
+    model: str,
+    client_factory: Callable[..., Any] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    use_cache: bool = True,
+) -> tuple[T, str]:
+    """Structured text call. No image part and no reasoning-effort field."""
+    key = response_cache_key(
+        image_bytes=b"",
+        prompt=prompt,
+        model=model,
+        image_detail="text",
+    )
+    messages = [{"role": "user", "content": prompt}]
+    return _run_completion(
+        settings,
+        model=model,
+        messages=messages,
+        response_model=response_model,
+        cache_key=key,
+        client_factory=client_factory,
+        sleeper=sleeper,
+        use_cache=use_cache,
+    )
+
+
+def _run_completion(
+    settings: Settings,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    response_model: type[T],
+    cache_key: str,
+    client_factory: Callable[..., Any] | None,
+    sleeper: Callable[[float], None],
+    use_cache: bool,
+) -> tuple[T, str]:
+    cache_file = settings.cache_path / f"{cache_key}.json"
     if use_cache:
-        cached = _read_cache(cache_file, model)
+        cached = _read_cache(cache_file, model, response_model)
         if cached is not None:
             logger.info(
                 "grok response model=%s latency_ms=0 cache=hit validation=passed",
@@ -117,7 +199,6 @@ def describe_image(
         timeout=httpx.Timeout(settings.request_timeout_s),
         max_retries=0,
     )
-    messages = _messages(prompt, image_bytes, mime, settings.image_detail)
 
     attempts = settings.validation_retries + 1
     last_error = "response did not match the schema"
@@ -125,9 +206,9 @@ def describe_image(
         started = time.perf_counter()
         try:
             completion = _call_with_transport_retries(
-                client, model, messages, settings, sleeper
+                client, model, messages, response_model, settings, sleeper
             )
-            parsed = _parse_completion(completion)
+            parsed = _parse_completion(completion, response_model)
         except GrokCallError:
             raise
         except (ValidationError, ValueError, json.JSONDecodeError) as exc:
@@ -159,6 +240,20 @@ def describe_image(
         f"{attempts} time(s) for model {model!r}. The image was skipped. "
         f"Last error: {last_error}"
     )
+
+
+def _check_encoded_image(image_bytes: bytes, mime: str, settings: Settings) -> None:
+    if mime not in {"image/jpeg", "image/png"}:
+        raise GrokCallError(
+            f"Unsupported image type {mime!r}. The xAI image docs allow .jpg, .jpeg, .png only: {DOCS[2]}"
+        )
+    if not image_bytes:
+        raise GrokCallError("Image is empty")
+    if len(image_bytes) > settings.max_image_bytes:
+        raise GrokCallError(
+            f"Image is {len(image_bytes)} bytes, above the configured limit of "
+            f"{settings.max_image_bytes} bytes ({DOCS[2]})."
+        )
 
 
 def _default_client(**kwargs: Any) -> OpenAI:
@@ -209,16 +304,19 @@ def _call_with_transport_retries(
     client: Any,
     model: str,
     messages: list[dict[str, Any]],
+    response_model: type[BaseModel],
     settings: Settings,
     sleeper: Callable[[float], None],
 ) -> Any:
     attempts = settings.max_transport_retries + 1
     for attempt in range(1, attempts + 1):
         try:
+            # Documented Chat Completions fields only. reasoning.effort belongs
+            # to the Responses API and is not sent here.
             return client.beta.chat.completions.parse(
                 model=model,
                 messages=messages,
-                response_format=IndexResponse,
+                response_format=response_model,
             )
         except (ValidationError, ValueError, json.JSONDecodeError):
             raise
@@ -263,7 +361,7 @@ def _docs_error(model: str, status: int | None, exc: BaseException) -> str:
     )
 
 
-def _parse_completion(completion: Any) -> IndexResponse:
+def _parse_completion(completion: Any, response_model: type[T]) -> T:
     choices = getattr(completion, "choices", None)
     if not choices:
         raise ValueError("response had no choices")
@@ -272,17 +370,17 @@ def _parse_completion(completion: Any) -> IndexResponse:
     if refusal:
         raise ValueError(f"model refusal: {refusal}")
     parsed = getattr(message, "parsed", None)
-    if isinstance(parsed, IndexResponse):
+    if isinstance(parsed, response_model):
         return parsed
     if parsed is not None:
-        return IndexResponse.model_validate(parsed)
+        return response_model.model_validate(parsed)
     content = getattr(message, "content", None)
     if not content:
         raise ValueError("response content was empty")
-    return IndexResponse.model_validate_json(content)
+    return response_model.model_validate_json(content)
 
 
-def _read_cache(path: Path, model: str) -> IndexResponse | None:
+def _read_cache(path: Path, model: str, response_model: type[T]) -> T | None:
     if not path.is_file():
         return None
     try:
@@ -290,7 +388,7 @@ def _read_cache(path: Path, model: str) -> IndexResponse | None:
         if payload.get("model") != model:
             logger.warning("cache entry model mismatch path=%s; ignoring", path.name)
             return None
-        return IndexResponse.model_validate(payload["response"])
+        return response_model.model_validate(payload["response"])
     except (OSError, json.JSONDecodeError, ValidationError, KeyError, TypeError) as exc:
         logger.warning(
             "cache entry failed validation path=%s error=%s; ignoring",
@@ -300,9 +398,11 @@ def _read_cache(path: Path, model: str) -> IndexResponse | None:
         return None
 
 
-def _write_cache(path: Path, model: str, response: IndexResponse) -> None:
+def _write_cache(path: Path, model: str, response: BaseModel) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"model": model, "response": response.model_dump()}
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    text = json.dumps(payload, indent=2)
+    with _cache_lock:
+        temporary.write_text(text, encoding="utf-8")
+        temporary.replace(path)
