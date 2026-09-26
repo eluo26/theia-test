@@ -4,7 +4,7 @@ import pytest
 
 from vision.clinic import match_inventory
 from vision.config import load_settings
-from vision.eval import GroundTruthItem, load_ground_truth, score_scene
+from vision.eval import EvalError, GroundTruthItem, evaluate_scene, load_ground_truth, score_scene
 from vision.references import TODO_REFERENCE_SEARCH, reference_note
 from vision.schemas import QueryResult
 
@@ -61,7 +61,17 @@ def test_eval_scores_correct_objects_and_angular_error():
     assert report.rows[1].angular_error_deg is None
 
 
-def test_desk_ground_truth_file_loads():
+def test_desk_ground_truth_starts_empty():
     items = load_ground_truth(Path("data/test_scenes/desk/ground_truth.json"))
-    labels = {item.expected_label for item in items}
-    assert {"blue water bottle", "Jardiance", "yellow lamp", "green mug"} <= labels
+    assert items == []
+
+
+def test_empty_ground_truth_does_not_index(tmp_path: Path, monkeypatch):
+    (tmp_path / "ground_truth.json").write_text('{"queries": []}\n', encoding="utf-8")
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("eval must not index a scene with no score sheet")
+
+    monkeypatch.setattr("vision.eval.build_catalog", fail_if_called)
+    with pytest.raises(EvalError, match="no queries"):
+        evaluate_scene(tmp_path)

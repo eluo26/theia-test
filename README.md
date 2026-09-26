@@ -62,7 +62,7 @@ Ask where something is. This indexes the folder, then prints one `QueryResult` J
 python -m vision.cli ask data/test_scenes/desk "where's my blue water bottle?"
 ```
 
-Score a scene against `ground_truth.json`. Pass a directory or a name under `data/test_scenes/`. The report is the correct-object rate and the mean angular error in degrees:
+Score a scene against `ground_truth.json` after you have measured it. Pass a directory or a name under `data/test_scenes/`. The desk sheet ships with an empty `queries` list, and `eval` exits until you add rows. The report is the correct-object rate and the mean angular error in degrees:
 
 ```bash
 python -m vision.cli eval desk
@@ -115,7 +115,7 @@ Image-conditioned OWLv2 search from `data/references/` is implemented in `vision
 
 ## Photos
 
-Do not generate stand-in pictures. Put real photos in `data/test_scenes/<scene>/` when you have them. A filename such as `pan060_tilt-10.jpg` carries pan and tilt. A `manifest.json` entry `{file, pan, tilt, timestamp}` wins when both are present. `data/test_scenes/desk/ground_truth.json` is a scoring template for `eval`. The image files themselves are not in this repo.
+Do not generate stand-in pictures. Put real photos in `data/test_scenes/<scene>/` when you have them. A filename such as `pan060_tilt-10.jpg` carries pan and tilt. `manifest.json` starts with an empty `frames` list. An entry `{file, pan, tilt, timestamp}` is optional and wins over the filename when you add one. `ground_truth.json` starts with an empty `queries` list. `describe`, `index`, and `ask` do not read object names from either file. The image files themselves are not in this repo.
 
 ## Config
 

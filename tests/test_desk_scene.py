@@ -4,18 +4,10 @@ from pathlib import Path
 DESK = Path("data/test_scenes/desk")
 
 
-def test_desk_manifest_records_angles_without_opening_photos():
-    """Angle metadata is JSON. Tests do not read saved scene photos."""
+def test_desk_manifest_does_not_assume_a_scan():
+    """Angles come from filenames the user adds. The manifest starts empty."""
     manifest = json.loads((DESK / "manifest.json").read_text(encoding="utf-8"))
-    frames = manifest["frames"]
-    assert frames
-    names = []
-    for entry in frames:
-        assert entry["file"]
-        assert isinstance(entry["pan"], (int, float))
-        assert isinstance(entry["tilt"], (int, float))
-        names.append(entry["file"])
-    assert len(names) == len(set(names))
+    assert manifest["frames"] == []
 
 
 def test_desk_directory_has_no_saved_scene_images():

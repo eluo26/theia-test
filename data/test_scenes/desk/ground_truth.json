@@ -1,26 +1,4 @@
-[
-  {
-    "query": "where's my blue water bottle?",
-    "expected_label": "blue water bottle",
-    "az": 18.0,
-    "el": -8.0
-  },
-  {
-    "query": "where's the Jardiance starter pack?",
-    "expected_label": "Jardiance",
-    "az": 2.0,
-    "el": -4.0
-  },
-  {
-    "query": "where is the yellow lamp?",
-    "expected_label": "yellow lamp",
-    "az": -22.0,
-    "el": 6.0
-  },
-  {
-    "query": "where is the green mug?",
-    "expected_label": "green mug",
-    "az": 36.0,
-    "el": -6.0
-  }
-]
+{
+  "note": "Score sheet for python -m vision.cli eval. Leave queries empty until a real scene has been measured. describe, index, and ask do not read this file.",
+  "queries": []
+}

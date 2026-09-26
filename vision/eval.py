@@ -94,6 +94,13 @@ def evaluate_scene(
         scene if scene.is_dir() else resolve_scene(str(scene))
     )
     items = load_ground_truth(scene_dir / "ground_truth.json")
+    if not items:
+        raise EvalError(
+            f"{scene_dir / 'ground_truth.json'} has no queries. "
+            "describe, index, and ask do not use this file. "
+            "After a real scan, add objects you measured as "
+            '{query, expected_label, az, el}.'
+        )
     catalog = build_catalog(
         scene_dir,
         settings=settings,
