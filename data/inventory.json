@@ -1,0 +1,30 @@
+{
+  "note": "Mock clinic closet. Counts and links are fixtures for clinic_mode, not a live inventory system.",
+  "items": [
+    {
+      "drug_name": "Jardiance",
+      "count": 2,
+      "expiry": "2027-04-30",
+      "resource_links": [
+        "https://www.jardiance.com/",
+        "https://dailymed.nlm.nih.gov/dailymed/search.cfm?labeltype=all&query=jardiance"
+      ]
+    },
+    {
+      "drug_name": "Metformin",
+      "count": 5,
+      "expiry": "2026-12-01",
+      "resource_links": [
+        "https://medlineplus.gov/druginfo/meds/a696005.html"
+      ]
+    },
+    {
+      "drug_name": "Lisinopril",
+      "count": 1,
+      "expiry": "2027-01-15",
+      "resource_links": [
+        "https://medlineplus.gov/druginfo/meds/a692051.html"
+      ]
+    }
+  ]
+}

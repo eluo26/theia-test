@@ -1,7 +1,12 @@
 """Object localization for a laser-pointing turret.
 
-Grok does scene understanding, query reasoning, and label reading.
-A local open-vocabulary detector tightens boxes in a later milestone.
+Grok does scene understanding and query reasoning.
+A local open-vocabulary detector tightens boxes when its weights are installed.
 """
 
-__version__ = "0.1.0"
+from vision.index import build_catalog
+from vision.query import locate
+
+__all__ = ["build_catalog", "locate", "__version__"]
+
+__version__ = "0.2.0"

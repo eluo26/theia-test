@@ -27,6 +27,8 @@ venv/
 # Model weight caches (detector downloads, Hugging Face, torch)
 .cache/
 models/
+weights/
+video/
 **/.cache/
 *.pt
 *.pth
