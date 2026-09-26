@@ -4,7 +4,7 @@ Python package for a HackGT laser-pointing turret. The configured vision provide
 
 This file is the spec for milestones M1–M6. M1 through M6 are implemented. The operator guide is README.md. The geometry below is the full pinhole rotation in `vision/geometry.py`, not a small-angle fraction of the FOV.
 
-`provider` in `config.yaml` is `openai` by default. Model ids live only in that file.
+`provider` in `config.yaml` is `xai` by default. Model ids live only in that file.
 
 OpenAI ids were copied from the docs on 2026-09-26 ([catalog](https://developers.openai.com/api/docs/models)):
 
@@ -12,7 +12,7 @@ OpenAI ids were copied from the docs on 2026-09-26 ([catalog](https://developers
 - `openai_reasoning_model`: `gpt-6-astra` ([docs](https://developers.openai.com/api/docs/models/gpt-6-astra)). Image input, structured outputs, Chat Completions. Flagship reasoning model used for the text query.
 - Base URL `https://api.openai.com/v1`. Key env `OPENAI_API_KEY`.
 
-Set `provider: xai` to use the Grok settings without a code change:
+`provider: xai` uses the Grok settings already in that file:
 
 - `grok_fast_model`: `grok-4.3` ([docs](https://docs.x.ai/developers/models/grok-4.3)).
 - `grok_reasoning_model`: `grok-4.7` ([docs](https://docs.x.ai/developers/models/grok-4.7)).
@@ -158,8 +158,8 @@ Implemented. `locate(query, catalog)` sends catalog text (id, label, description
 
 ## [HUMAN]
 
-- Create an OpenAI API key at https://platform.openai.com/api-keys. It may be shown only once.
-- Store it in `.env` as `OPENAI_API_KEY`. Never commit `.env`. Confirm `git status` before committing. If a key leaks, revoke it and create a new one.
-- Confirm `openai_fast_model` and `openai_reasoning_model` in `config.yaml` against the docs before the demo. To use xAI later, set `provider: xai` and `XAI_API_KEY`.
+- Create an xAI API key at https://console.x.ai. It may be shown only once.
+- Store it in `.env` as `XAI_API_KEY`. Never commit `.env`. Confirm `git status` before committing. If a key leaks, revoke it and create a new one.
+- Confirm `grok_fast_model` and `grok_reasoning_model` in `config.yaml` against the docs before the demo. To use OpenAI later, set `provider: openai` and `OPENAI_API_KEY`.
 - Measure the camera field of view, width, and height later, and replace the placeholders. Add intrinsics if the lens needs them.
 - Shoot real angle-tagged photos into `data/test_scenes/<scene>/`. This repo does not include synthetic stand-in images.

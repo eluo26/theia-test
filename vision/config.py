@@ -186,8 +186,6 @@ def require_api_key(settings: Settings | None = None) -> str:
     key = os.environ.get(env_name, "").strip()
     if not key or key == PLACEHOLDER_API_KEY:
         raise MissingAPIKeyError(
-            f"{env_name} is not set. Copy .env.example to .env in the project root "
-            f"and paste the key you created at {settings.key_help_url}. "
-            "Confirm .env is gitignored before you commit (run git status)."
+            f"{env_name} is not set. Add it to .env in the project root."
         )
     return key

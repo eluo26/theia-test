@@ -101,17 +101,17 @@ Image-conditioned search from `data/references/` is implemented as `vision.refer
 
 ## Provider
 
-`provider: openai` in `config.yaml`. Base URL `https://api.openai.com/v1`. Key variable `OPENAI_API_KEY`.
+`provider: xai` in `config.yaml`. Base URL `https://api.x.ai/v1`. Key variable `XAI_API_KEY`.
 
 Model ids are read from config only. They were copied from the docs on 2026-09-26. If a call fails, change the id in `config.yaml` from the docs. Do not invent a replacement in code.
 
-- Fast / vision / indexing: `openai_fast_model` `gpt-6-luna`. https://developers.openai.com/api/docs/models/gpt-6-luna
-- Reasoning: `openai_reasoning_model` `gpt-6-astra`. https://developers.openai.com/api/docs/models/gpt-6-astra
+- Fast / vision / indexing: `grok_fast_model` in `config.yaml`. https://docs.x.ai/developers/models/grok-4.3
+- Reasoning: `grok_reasoning_model` in `config.yaml`. https://docs.x.ai/developers/models/grok-4.7
 - Questions currently use the fast model (`query_model: fast`).
 
-Calls use `client.chat.completions.parse(..., response_format=<pydantic model>)` with an `image_url` data URL. `image_detail` may be `low`, `high`, `original`, or `auto`. Config uses `low`. https://platform.openai.com/docs/guides/images-vision
+Calls use `client.chat.completions.parse(..., response_format=<pydantic model>)` with an `image_url` data URL. `image_detail` may be `low`, `high`, `original`, or `auto`. Config uses `low`. https://docs.x.ai/developers/model-capabilities/legacy/chat-completions
 
-xAI is a config switch. Set `provider: xai`, then `grok-4.3`, `grok-4.7`, base URL `https://api.x.ai/v1`, and `XAI_API_KEY`. https://docs.x.ai/developers/models/grok-4.3 and https://docs.x.ai/developers/models/grok-4.7
+OpenAI is a config switch. Set `provider: openai`, then the `openai_fast_model` and `openai_reasoning_model` values already in `config.yaml`, base URL `https://api.openai.com/v1`, and `OPENAI_API_KEY`.
 
 `reasoning.effort` is a Responses API field. It is not sent on these Chat Completions calls.
 

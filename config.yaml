@@ -1,9 +1,9 @@
 # Vision module configuration.
-# provider selects the API. Switching back to xAI is a config change.
+# provider selects the API. Switching back to OpenAI is a config change.
 # Model ids are read from here only. If a call fails, fix these values from the
 # docs. Do not invent a replacement id in code.
 
-provider: openai
+provider: xai
 
 # OpenAI model ids read on 2026-09-26.
 # https://developers.openai.com/api/docs/models

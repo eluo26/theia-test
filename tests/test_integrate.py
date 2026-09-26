@@ -49,7 +49,7 @@ def _obj(label, box):
 
 
 def test_answer_fires_only_when_the_query_is_found(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     Image.new("RGB", (200, 100), (255, 255, 255)).save(tmp_path / "pan000_tilt000.png")
     settings = _settings(tmp_path)
     decisions = []

@@ -56,7 +56,7 @@ def _settings(tmp_path: Path, **updates):
 
 
 def test_locate_returns_the_json_contract(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     frame = "pan030_tilt-10.png"
     Image.new("RGB", (200, 100), (240, 240, 240)).save(tmp_path / frame)
     catalog = Catalog(
@@ -133,7 +133,7 @@ def test_locate_returns_the_json_contract(tmp_path, monkeypatch):
 
 
 def test_clinic_mode_attaches_inventory(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     frame = "pan000_tilt000.png"
     Image.new("RGB", (200, 100), (255, 255, 255)).save(tmp_path / frame)
     obj = _object(frame).model_copy(
@@ -168,7 +168,7 @@ def test_clinic_mode_attaches_inventory(tmp_path, monkeypatch):
 
 
 def test_tighter_detector_box_on_the_crop(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     frame = "pan000_tilt000.png"
     Image.new("RGB", (200, 100), (255, 255, 255)).save(tmp_path / frame)
     catalog = Catalog(
@@ -200,7 +200,7 @@ def test_tighter_detector_box_on_the_crop(tmp_path, monkeypatch):
 
 
 def test_ambiguous_same_label_aims_at_the_higher_confidence_view(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     left = _object("pan000_tilt000.png").model_copy(
         update={
             "object_id": "obj_001",
@@ -258,7 +258,7 @@ def test_ambiguous_same_label_aims_at_the_higher_confidence_view(tmp_path, monke
 
 
 def test_ambiguous_different_labels_stay_ambiguous(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     laptop = _object("pan000_tilt000.png").model_copy(
         update={
             "object_id": "obj_001",
@@ -309,7 +309,7 @@ def test_ambiguous_different_labels_stay_ambiguous(tmp_path, monkeypatch):
 
 
 def test_text_query_does_not_send_reasoning_effort(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     calls = []
 
@@ -363,7 +363,7 @@ def _counting_client(parsed):
 
 
 def test_direct_label_skips_the_text_model_and_aims_at_the_best_view(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     frame = "pan090_tilt000.png"
     Image.new("RGB", (200, 100), (240, 240, 240)).save(tmp_path / frame)
     left = _object(frame).model_copy(
@@ -416,7 +416,7 @@ def test_direct_label_skips_the_text_model_and_aims_at_the_best_view(tmp_path, m
 
 
 def test_relational_question_still_calls_the_text_model(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     lamp = _object("pan000_tilt000.png").model_copy(
         update={"object_id": "obj_001", "label": "lamp", "confidence": 0.4, "azimuth_deg": 0.0}
     )
@@ -449,7 +449,7 @@ def test_relational_question_still_calls_the_text_model(tmp_path, monkeypatch):
 
 
 def test_two_different_objects_stay_ambiguous_without_a_text_call(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     cola = _object("pan000_tilt000.png").model_copy(
         update={
             "object_id": "obj_016",

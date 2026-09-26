@@ -22,13 +22,13 @@ def _hide_repo_env(monkeypatch):
 
 def test_check_config_hides_a_present_key(capsys, monkeypatch):
     _hide_repo_env(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     assert main(["check-config"]) == 0
     out = capsys.readouterr().out
-    assert "provider: openai" in out
+    assert "provider: xai" in out
     assert "fast_model:" in out
-    assert "base_url: https://api.openai.com/v1" in out
-    assert "OPENAI_API_KEY: present" in out
+    assert "base_url: https://api.x.ai/v1" in out
+    assert "XAI_API_KEY: present" in out
     assert _api_key() not in out
     assert "notalivekeyvalue" not in out
 
@@ -36,7 +36,7 @@ def test_check_config_hides_a_present_key(capsys, monkeypatch):
 def test_check_config_reports_a_missing_key(capsys, monkeypatch):
     _hide_repo_env(monkeypatch)
     assert main(["check-config"]) == 0
-    assert "OPENAI_API_KEY: missing" in capsys.readouterr().out
+    assert "XAI_API_KEY: missing" in capsys.readouterr().out
 
 
 def test_describe_requires_a_key(tmp_path, capsys, monkeypatch):
@@ -45,7 +45,7 @@ def test_describe_requires_a_key(tmp_path, capsys, monkeypatch):
     Image.new("RGB", (16, 16), (255, 255, 255)).save(image)
     assert main(["describe", str(image), "--out-dir", str(tmp_path / "out")]) == 1
     err = capsys.readouterr().err
-    assert "OPENAI_API_KEY" in err
+    assert "XAI_API_KEY" in err
     assert not list((tmp_path / "out").glob("*"))
 
 
@@ -87,18 +87,18 @@ def test_describe_writes_json_and_an_annotated_image(tmp_path, monkeypatch, caps
 def test_index_and_ask_fail_without_a_key(tmp_path, monkeypatch, capsys):
     _hide_repo_env(monkeypatch)
     assert main(["index", str(tmp_path)]) == 1
-    assert "OPENAI_API_KEY" in capsys.readouterr().err
+    assert "XAI_API_KEY" in capsys.readouterr().err
     assert main(["ask", str(tmp_path), "where is the bottle?"]) == 1
     err = capsys.readouterr().err
-    assert "OPENAI_API_KEY" in err
-    assert "platform.openai.com" in err
+    assert "XAI_API_KEY" in err
+    assert ".env" in err
     assert main(["answer", str(tmp_path), "where is the bottle?"]) == 1
-    assert "OPENAI_API_KEY" in capsys.readouterr().err
+    assert "XAI_API_KEY" in capsys.readouterr().err
 
 
 def test_index_and_ask_succeed_when_the_api_is_mocked(tmp_path, monkeypatch, capsys):
     _hide_repo_env(monkeypatch)
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     Image.new("RGB", (200, 100), (255, 255, 255)).save(tmp_path / "pan030_tilt-10.png")
     settings = __import__("vision.config", fromlist=["load_settings"]).load_settings(load_env=False)
     settings = settings.model_copy(

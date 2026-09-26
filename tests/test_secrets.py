@@ -36,8 +36,8 @@ def test_gitignore_covers_the_required_paths():
 
 def test_env_example_has_no_live_key():
     text = (ROOT / ".env.example").read_text(encoding="utf-8")
-    assert "OPENAI_API_KEY=your-key-here" in text
     assert "XAI_API_KEY=your-key-here" in text
+    assert "OPENAI_API_KEY=" not in text
     assert "sk-" not in text
     assert "xai-" not in text
 

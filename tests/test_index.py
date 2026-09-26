@@ -106,7 +106,7 @@ def test_dedupe_writes_a_catalog(tmp_path: Path):
 
 
 def test_build_catalog_merges_two_views_and_writes_json(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     for name, pan in (("pan010_tilt000.png", 10), ("pan012_tilt000.png", 12)):
         Image.new("RGB", (200, 100), (255, 255, 255)).save(tmp_path / name)
     settings = _settings(tmp_path)
@@ -144,7 +144,7 @@ def test_build_catalog_merges_two_views_and_writes_json(tmp_path, monkeypatch):
 
 
 def test_detector_box_is_kept_when_iou_is_high(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     Image.new("RGB", (100, 80), (255, 255, 255)).save(tmp_path / "pan000_tilt000.png")
     settings = _settings(tmp_path)
 
@@ -180,7 +180,7 @@ def test_detector_box_is_kept_when_iou_is_high(tmp_path, monkeypatch):
 
 
 def test_invalid_tile_is_skipped(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     Image.new("RGB", (32, 32), (255, 255, 255)).save(tmp_path / "pan000_tilt000.png")
     settings = _settings(tmp_path, validation_retries=1)
 
@@ -211,7 +211,7 @@ def test_invalid_tile_is_skipped(tmp_path, monkeypatch, caplog):
 
 
 def test_downscaled_photo_keeps_the_center_on_pan(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     Image.new("RGB", (1600, 800), (255, 255, 255)).save(tmp_path / "pan020_tilt000.jpg", quality=85)
     settings = _settings(tmp_path, api_max_edge=100)
 
@@ -244,7 +244,7 @@ def test_downscaled_photo_keeps_the_center_on_pan(tmp_path, monkeypatch):
 
 
 def test_second_query_reuses_the_catalog(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     Image.new("RGB", (80, 40), (255, 255, 255)).save(tmp_path / "pan000_tilt000.png")
     settings = _settings(tmp_path)
     calls = {"n": 0}
@@ -278,7 +278,7 @@ def test_second_query_reuses_the_catalog(tmp_path, monkeypatch):
 
 
 def test_changing_one_photo_does_not_reupload_the_others(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     for name in ("pan000_tilt000.png", "pan030_tilt000.png", "pan060_tilt000.png"):
         Image.new("RGB", (80, 40), (255, 255, 255)).save(tmp_path / name)
     settings = _settings(tmp_path)

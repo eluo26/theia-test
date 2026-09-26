@@ -6,7 +6,7 @@ The full list of commands, settings, and pipeline steps is in [GUIDE.md](GUIDE.m
 
 ## Setup
 
-From the repo root. Each person uses their own key. Put it only in `.env`. `.env.example` stays `OPENAI_API_KEY=your-key-here`.
+From the repo root. Each person uses their own key. Copy `.env.example` to `.env` and set `XAI_API_KEY` there. Never commit `.env`.
 
 Windows:
 
@@ -19,7 +19,7 @@ git config core.hooksPath .githooks
 
 macOS or Linux: `python3 -m venv .venv`, then `source .venv/bin/activate` and `pip install -r requirements.txt`.
 
-`git status` must not list `.env`. If a key leaks, revoke it at https://platform.openai.com/api-keys and create a new one.
+`git status` must not list `.env`. If a key leaks, revoke it at https://console.x.ai and create a new one.
 
 ## Photos
 

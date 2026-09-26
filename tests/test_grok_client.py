@@ -74,7 +74,7 @@ def _ok_response():
 
 
 def test_describe_uses_the_model_from_config(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     completions = _FakeCompletions([_completion(_ok_response())])
     result, cache_state = describe_image(
@@ -86,14 +86,14 @@ def test_describe_uses_the_model_from_config(tmp_path, monkeypatch):
     assert cache_state == "miss"
     assert result.objects[0].label == "blue bottle"
     assert completions.calls[0]["model"] == settings.fast_model
-    assert completions.calls[0]["model"] == settings.openai_fast_model
+    assert completions.calls[0]["model"] == settings.grok_fast_model
     assert completions.calls[0]["response_format"] is IndexResponse
     sent = completions.calls[0]["messages"][0]["content"][0]["image_url"]["detail"]
     assert sent == settings.image_detail
 
 
 def test_second_call_is_a_cache_hit(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     completions = _FakeCompletions([_completion(_ok_response())])
     image = _image(tmp_path)
@@ -108,7 +108,7 @@ def test_second_call_is_a_cache_hit(tmp_path, monkeypatch):
 
 
 def test_invalid_json_is_retried_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path).model_copy(update={"validation_retries": 1})
     completions = _FakeCompletions(
         [
@@ -128,7 +128,7 @@ def test_invalid_json_is_retried_once(tmp_path, monkeypatch):
 
 
 def test_repeated_invalid_json_skips_the_image(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path).model_copy(update={"validation_retries": 1})
     completions = _FakeCompletions(
         [
@@ -146,13 +146,13 @@ def test_repeated_invalid_json_skips_the_image(tmp_path, monkeypatch):
 
 
 def test_http_400_is_not_retried_and_points_at_the_docs(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     error = RuntimeError("bad request involving " + _api_key())
     error.status_code = 400
     completions = _FakeCompletions([error, _completion(_ok_response())])
     sleeps = []
-    with pytest.raises(GrokCallError, match="developers.openai.com") as caught:
+    with pytest.raises(GrokCallError, match="docs.x.ai") as caught:
         describe_image(
             _image(tmp_path),
             settings,
@@ -166,7 +166,7 @@ def test_http_400_is_not_retried_and_points_at_the_docs(tmp_path, monkeypatch):
 
 
 def test_rate_limit_uses_backoff_then_succeeds(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path).model_copy(update={"retry_base_delay_s": 0.5})
     limited = RuntimeError("slow down")
     limited.status_code = 429
@@ -207,7 +207,7 @@ def _write_heic(path: Path) -> None:
 
 
 def test_heic_is_sent_as_jpeg(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     path = tmp_path / "IMG_0205.HEIC"
     _write_heic(path)
@@ -229,7 +229,7 @@ def test_heic_is_sent_as_jpeg(tmp_path, monkeypatch):
 
 
 def test_webp_suffix_is_accepted(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     image = tmp_path / "frame.webp"
     image.write_bytes(b"RIFFxxxxWEBP")
@@ -251,7 +251,7 @@ def _sent_image_bytes(call: dict) -> bytes:
 
 
 def test_upright_jpeg_is_sent_unchanged(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     path = tmp_path / "pan000_tilt0.jpg"
     Image.new("RGB", (40, 12), (20, 40, 60)).save(path, format="JPEG", quality=90)
@@ -267,7 +267,7 @@ def test_upright_jpeg_is_sent_unchanged(tmp_path, monkeypatch):
 
 
 def test_sideways_phone_jpeg_is_sent_upright(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     path = tmp_path / "pan000_tilt0.jpg"
     image = Image.new("RGB", (40, 12), (200, 10, 10))
@@ -320,7 +320,7 @@ def test_client_source_does_not_hardcode_a_model_id():
 
 
 def test_cached_file_is_json(tmp_path, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    monkeypatch.setenv("XAI_API_KEY", _api_key())
     settings = _settings(tmp_path)
     completions = _FakeCompletions([_completion(_ok_response())])
     describe_image(
