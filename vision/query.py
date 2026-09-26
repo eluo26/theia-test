@@ -21,6 +21,7 @@ from vision.matching import match_text, same_label_family, side_view_core, token
 from vision.preprocess import encode_png
 from vision.references import reference_note
 from vision.schemas import (
+    Candidate,
     Catalog,
     CatalogObject,
     ObjectMetadata,
