@@ -20,7 +20,7 @@ from vision.ingest import LoadedFrame, load_scan
 from vision.matching import token_ratio
 from vision.preprocess import Tile, encode_png, make_tiles, map_norm_box_to_frame, prepare_frame, shift_box
 from vision.schemas import Catalog, CatalogObject, Detection, IndexResponse, norm_box_to_pixels
-from vision.viz import annotate_detections
+from vision.viz import annotate_detections, legend_name
 
 logger = logging.getLogger("vision.index")
 
@@ -63,7 +63,13 @@ def build_catalog(
     objects = merge_detections(detections, settings, created_at=created_at)
     catalog = Catalog(objects=objects, created_at=created_at, scan_dir=str(scan_path))
     write_catalog(catalog, settings.out_path / "catalog.json")
-    _write_debug(frames, detections, objects, settings.out_path / "debug")
+    _write_debug(
+        frames,
+        detections,
+        objects,
+        settings.out_path / "debug",
+        legend=legend_name(settings.provider),
+    )
     logger.info("catalog objects=%s path=%s", len(objects), settings.out_path / "catalog.json")
     return catalog
 
@@ -298,7 +304,7 @@ def _prefer_text(rep: Detection, group: list[Detection], field: str) -> str | No
     return None
 
 
-def _write_debug(frames, detections, objects, dest: Path) -> None:
+def _write_debug(frames, detections, objects, dest: Path, *, legend: str) -> None:
     by_file: dict[str, list[Detection]] = {}
     for detection in detections:
         by_file.setdefault(detection.frame_file, []).append(detection)
@@ -313,6 +319,7 @@ def _write_debug(frames, detections, objects, dest: Path) -> None:
             by_file.get(frame.source_file, []),
             dest / f"{Path(frame.source_file).stem}.png",
             ids=frame_ids,
+            legend=legend,
         )
 
 

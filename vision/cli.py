@@ -23,7 +23,7 @@ from vision.grok_client import GrokCallError, describe_image, redact
 from vision.index import build_catalog
 from vision.ingest import IngestError
 from vision.query import locate, public_query_dict
-from vision.viz import annotate_image
+from vision.viz import annotate_image, legend_name
 
 logger = logging.getLogger("vision.cli")
 
@@ -225,7 +225,7 @@ def _describe(settings, image: Path, out_dir: Path | None, *, use_cache: bool) -
     image_path = destination_dir / f"{image.stem}_annotated.png"
     payload = result.model_dump()
     json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    annotate_image(image, result.objects, image_path)
+    annotate_image(image, result.objects, image_path, legend=legend_name(settings.provider))
 
     print(json.dumps(payload, indent=2))
     print(f"cache: {cache_state}", file=sys.stderr)

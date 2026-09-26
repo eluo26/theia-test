@@ -109,7 +109,7 @@ result = locate("where's my blue water bottle?", catalog)
 8. The chosen object is cropped with `crop_pad`. The fast vision model is asked whether the crop is that label and to return a tight box. The detector runs on the crop too. The tighter box is kept when the two agree, then azimuth and elevation are recomputed.
 9. With `clinic_mode: true`, `drug_name` is fuzzy-matched against `data/inventory.json` and the match is attached to `metadata.inventory`.
 
-Debug images use green for vision-model boxes and blue for detector boxes, with labels and ids. The green legend still reads "Grok" from the earlier overlay code.
+Debug images use green for vision-model boxes and blue for detector boxes, with labels and ids. The green legend uses the active provider name from `config.yaml` (`OpenAI` or `xAI`).
 
 Image-conditioned OWLv2 search from `data/references/` is implemented in `vision/references.py` (`image_guided_boxes`) and is not called by `index` or `ask`. It needs the detector weights and was not run here. See the manual steps.
 

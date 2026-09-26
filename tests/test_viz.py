@@ -5,7 +5,23 @@ from PIL import Image
 import numpy as np
 
 from vision.schemas import Detection, IndexedObject
-from vision.viz import DETECTOR_COLOR, GROK_COLOR, annotate_detections, annotate_image
+from vision.viz import DETECTOR_COLOR, GROK_COLOR, annotate_detections, annotate_image, legend_name
+
+
+def test_legend_name_follows_the_provider():
+    assert legend_name("openai") == "OpenAI"
+    assert legend_name("xai") == "xAI"
+
+
+def test_annotate_uprights_a_sideways_jpeg(tmp_path: Path):
+    source = tmp_path / "pan000_tilt0.jpg"
+    image = Image.new("RGB", (40, 12), (240, 240, 240))
+    exif = image.getexif()
+    exif[274] = 6
+    image.save(source, format="JPEG", exif=exif)
+    dest = tmp_path / "annotated.png"
+    annotate_image(source, [], dest, legend="OpenAI")
+    assert Image.open(dest).size == (12, 40)
 
 
 def test_annotate_draws_a_green_box(tmp_path: Path):

@@ -1,13 +1,28 @@
-"""Draw Grok boxes and labels on an image for debugging."""
+"""Draw vision-model boxes and labels on an image for debugging."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from vision.schemas import Detection, IndexedObject, norm_box_to_pixels
+
+_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    r"C:\Windows\Fonts\segoeui.ttf",
+    r"C:\Windows\Fonts\arial.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/Library/Fonts/Arial.ttf",
+)
+
+
+def legend_name(provider: str) -> str:
+    """Short label for the green boxes. It follows config.yaml provider."""
+    return {"openai": "OpenAI", "xai": "xAI"}.get(provider, provider)
+
 
 GROK_COLOR = (32, 140, 64)
 DETECTOR_COLOR = (37, 99, 235)
@@ -18,9 +33,14 @@ def annotate_image(
     source: Path,
     objects: list[IndexedObject],
     dest: Path,
+    *,
+    legend: str = "OpenAI",
 ) -> Path:
-    """Save a copy of source with a green box and label for each Grok object."""
-    image = Image.open(source).convert("RGB")
+    """Save a copy of source with a green box and label for each vision-model object."""
+    with Image.open(source) as opened:
+        transposed = ImageOps.exif_transpose(opened)
+        image = (transposed if transposed is not None else opened).convert("RGB")
+        image.load()
     draw = ImageDraw.Draw(image)
     font = _font(16)
     width, height = image.size
@@ -41,7 +61,6 @@ def annotate_image(
         )
         draw.text((x1 + 4, top + 2), caption, fill=TEXT_COLOR, font=font)
 
-    legend = "Grok"
     legend_box = draw.textbbox((0, 0), legend, font=font)
     legend_w = legend_box[2] - legend_box[0]
     legend_h = legend_box[3] - legend_box[1]
@@ -70,8 +89,10 @@ def annotate_detections(
     detections: list[Detection],
     dest: Path,
     ids: dict[tuple[int, int, int, int], str] | None = None,
+    *,
+    legend: str = "OpenAI",
 ) -> Path:
-    """Save a debug image. Grok boxes are green. Detector boxes are blue."""
+    """Save a debug image. Vision-model boxes are green. Detector boxes are blue."""
     if isinstance(image, np.ndarray):
         canvas = Image.fromarray(np.ascontiguousarray(image)).convert("RGB")
     else:
@@ -104,7 +125,7 @@ def annotate_detections(
             width,
         )
 
-    _legend(draw, font)
+    _legend(draw, font, legend)
     dest.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(dest)
     return dest
@@ -144,24 +165,21 @@ def _draw_box(draw, box, color, font, caption, width) -> None:
     draw.text((x1 + 4, top + 2), caption, fill=TEXT_COLOR, font=font)
 
 
-def _legend(draw, font) -> None:
-    grok_box = draw.textbbox((0, 0), "Grok", font=font)
+def _legend(draw, font, vision_label: str) -> None:
+    grok_box = draw.textbbox((0, 0), vision_label, font=font)
     det_box = draw.textbbox((0, 0), "detector", font=font)
     grok_w = grok_box[2] - grok_box[0]
     det_w = det_box[2] - det_box[0]
     height = max(grok_box[3] - grok_box[1], det_box[3] - det_box[1])
     draw.rectangle([8, 8, 16 + grok_w, 14 + height], fill=GROK_COLOR)
-    draw.text((12, 10), "Grok", fill=TEXT_COLOR, font=font)
+    draw.text((12, 10), vision_label, fill=TEXT_COLOR, font=font)
     left = 24 + grok_w
     draw.rectangle([left, 8, left + 8 + det_w, 14 + height], fill=DETECTOR_COLOR)
     draw.text((left + 4, 10), "detector", fill=TEXT_COLOR, font=font)
 
 
 def _font(size: int) -> ImageFont.ImageFont:
-    for path in (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    ):
+    for path in _FONT_CANDIDATES:
         if Path(path).is_file():
             return ImageFont.truetype(path, size=size)
     return ImageFont.load_default()

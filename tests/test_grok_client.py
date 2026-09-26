@@ -1,8 +1,11 @@
+import base64
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from vision.config import load_settings
 from vision.grok_client import GrokCallError, describe_image, redact, response_cache_key
@@ -202,6 +205,47 @@ def test_webp_suffix_is_accepted(tmp_path, monkeypatch):
     sent = completions.calls[0]["messages"][0]["content"][0]["image_url"]["url"]
     assert sent.startswith("data:image/webp;base64,")
     assert result.objects[0].label == "blue bottle"
+
+
+def _sent_image_bytes(call: dict) -> bytes:
+    url = call["messages"][0]["content"][0]["image_url"]["url"]
+    return base64.b64decode(url.split(",", 1)[1])
+
+
+def test_upright_jpeg_is_sent_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    settings = _settings(tmp_path)
+    path = tmp_path / "pan000_tilt0.jpg"
+    Image.new("RGB", (40, 12), (20, 40, 60)).save(path, format="JPEG", quality=90)
+    original = path.read_bytes()
+    completions = _FakeCompletions([_completion(_ok_response())])
+    describe_image(
+        path,
+        settings,
+        client_factory=_client_factory(completions),
+        sleeper=lambda _delay: None,
+    )
+    assert _sent_image_bytes(completions.calls[0]) == original
+
+
+def test_sideways_phone_jpeg_is_sent_upright(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    settings = _settings(tmp_path)
+    path = tmp_path / "pan000_tilt0.jpg"
+    image = Image.new("RGB", (40, 12), (200, 10, 10))
+    exif = image.getexif()
+    exif[274] = 6
+    image.save(path, format="JPEG", exif=exif, quality=95)
+    completions = _FakeCompletions([_completion(_ok_response())])
+    describe_image(
+        path,
+        settings,
+        client_factory=_client_factory(completions),
+        sleeper=lambda _delay: None,
+    )
+    sent = Image.open(io.BytesIO(_sent_image_bytes(completions.calls[0])))
+    assert sent.size == (12, 40)
+    assert sent.getexif().get(274) in (None, 1)
 
 
 def test_cache_key_changes_with_model_and_image():

@@ -20,7 +20,7 @@ from typing import Any, TypeVar
 
 import httpx
 from openai import OpenAI
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel, ValidationError
 
 from vision.config import Settings, require_api_key
@@ -294,14 +294,53 @@ def _load_image_bytes(path: Path, settings: Settings) -> tuple[bytes, str]:
             f"Unsupported image type {suffix!r}. Supported types are {allowed}: {settings.docs_urls[-1]}"
         )
     image_bytes = path.read_bytes()
+    if not image_bytes:
+        raise GrokCallError(f"Image file is empty: {path}")
     if len(image_bytes) > settings.max_image_bytes:
         raise GrokCallError(
             f"Image is {len(image_bytes)} bytes, above the configured limit of "
             f"{settings.max_image_bytes} bytes ({settings.docs_urls[-1]})."
         )
-    if not image_bytes:
-        raise GrokCallError(f"Image file is empty: {path}")
+    image_bytes = _upright_image_bytes(image_bytes, mime)
+    if len(image_bytes) > settings.max_image_bytes:
+        raise GrokCallError(
+            f"Image is {len(image_bytes)} bytes, above the configured limit of "
+            f"{settings.max_image_bytes} bytes ({settings.docs_urls[-1]})."
+        )
     return image_bytes, mime
+
+
+def _upright_image_bytes(image_bytes: bytes, mime: str) -> bytes:
+    """Bake a sideways EXIF orientation into the pixels.
+
+    Phone JPEGs are often stored rotated, with the orientation only in metadata.
+    Indexing already applies that tag. A one-photo describe call has to do the
+    same, or the boxes come back in a different frame than the file on disk.
+    Bytes that are not a real image are returned unchanged.
+    """
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            orientation = image.getexif().get(274)
+            if not orientation or int(orientation) == 1:
+                return image_bytes
+            upright = ImageOps.exif_transpose(image)
+            if upright is None:
+                return image_bytes
+            buffer = io.BytesIO()
+            if mime == "image/jpeg":
+                upright.convert("RGB").save(buffer, format="JPEG", quality=95)
+            elif mime == "image/png":
+                upright.save(buffer, format="PNG")
+            elif mime == "image/webp":
+                upright.save(buffer, format="WEBP")
+            elif mime == "image/gif":
+                upright.save(buffer, format="GIF")
+            else:
+                return image_bytes
+            encoded = buffer.getvalue()
+    except Exception:
+        return image_bytes
+    return encoded or image_bytes
 
 
 def _messages(prompt: str, image_bytes: bytes, mime: str, detail: str) -> list[dict[str, Any]]:
