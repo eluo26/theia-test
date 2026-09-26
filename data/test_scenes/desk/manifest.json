@@ -1,5 +1,5 @@
 {
-  "note": "Synthetic fixture angles for the desk scene. Not a Grok response.",
+  "note": "Angle list for a real desk scan. Add the named photos locally; they are not stored in git.",
   "frames": [
     {
       "file": "pan-040_tilt000.png",

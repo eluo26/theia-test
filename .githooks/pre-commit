@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Block commits that stage env files or xAI API key-like strings.
+# Block commits that stage env files or API key-like strings.
 set -euo pipefail
 
 staged="$(git diff --cached --name-only --diff-filter=ACMR)"
@@ -18,13 +18,13 @@ while IFS= read -r file; do
   fi
 done <<< "$staged"
 
-# Added lines only. A real key starts with xai- plus a long token.
+# Added lines only. The character classes below are not themselves key tokens.
 if git diff --cached --diff-filter=ACMR -U0 -- . \
   | grep -E '^\+' \
-  | grep -E 'xai-[A-Za-z0-9]{10,}'
+  | grep -E 'xai-[A-Za-z0-9]{10,}|sk-[A-Za-z0-9_-]{20,}'
 then
-  echo "Refusing commit: staged content contains an xAI API key-like string."
-  echo "If this is a real key, revoke it at https://console.x.ai and create a new one."
+  echo "Refusing commit: staged content contains an API key-like string."
+  echo "If this is a real key, revoke it and create a new one."
   echo "Deleting the line locally is not enough once it has been pushed."
   exit 1
 fi

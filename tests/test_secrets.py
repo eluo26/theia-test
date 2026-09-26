@@ -26,8 +26,10 @@ def test_gitignore_covers_the_required_paths():
 
 def test_env_example_has_no_live_key():
     text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY=your-key-here" in text
     assert "XAI_API_KEY=your-key-here" in text
-    assert "xai-" not in text.split("XAI_API_KEY=", 1)[-1]
+    assert "sk-" not in text
+    assert "xai-" not in text
 
 
 def test_hook_blocks_an_env_file_and_a_key(tmp_path: Path):
@@ -44,8 +46,16 @@ def test_hook_blocks_an_env_file_and_a_key(tmp_path: Path):
     assert "key-like" in blocked.stdout + blocked.stderr
 
     subprocess.run(["git", "rm", "--cached", "notes.txt"], cwd=repo, check=True, capture_output=True)
+    openai_leak = repo / "openai.txt"
+    openai_leak.write_text("OPENAI_API_KEY=" + "sk-" + ("a" * 24) + "\n", encoding="utf-8")
+    subprocess.run(["git", "add", "openai.txt"], cwd=repo, check=True, capture_output=True)
+    blocked_openai = subprocess.run([str(HOOK)], cwd=repo, capture_output=True, text=True)
+    assert blocked_openai.returncode != 0
+    assert "key-like" in blocked_openai.stdout + blocked_openai.stderr
+
+    subprocess.run(["git", "rm", "--cached", "openai.txt"], cwd=repo, check=True, capture_output=True)
     env_file = repo / ".env"
-    env_file.write_text("XAI_API_KEY=your-key-here\n", encoding="utf-8")
+    env_file.write_text("OPENAI_API_KEY=your-key-here\n", encoding="utf-8")
     subprocess.run(["git", "add", "-f", ".env"], cwd=repo, check=True, capture_output=True)
     blocked_env = subprocess.run([str(HOOK)], cwd=repo, capture_output=True, text=True)
     assert blocked_env.returncode != 0

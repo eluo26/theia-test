@@ -28,7 +28,7 @@ pip install -r requirements.txt
 git config core.hooksPath .githooks
 ```
 
-`scripts/install-hooks.sh` sets that hooks path and marks `.githooks/pre-commit` executable. The hook refuses a staged `.env` (`.env.example` is allowed) and any added line that looks like an `xai-` API key.
+`scripts/install-hooks.sh` sets that hooks path and marks `.githooks/pre-commit` executable. The hook refuses a staged `.env` (`.env.example` is allowed) and any added line that looks like an `xai-` key or an OpenAI-style `sk-` key.
 
 Optional detector, only when you want local box refinement:
 
@@ -44,10 +44,10 @@ Check the loaded settings. This does not print the API key:
 python -m vision.cli check-config
 ```
 
-Describe one image (milestone 1). Needs a real key in `.env`:
+Describe one real photo. Needs a key in `.env`. This repo does not include a sample image:
 
 ```bash
-python -m vision.cli describe data/test_scenes/m1/scene.png
+python -m vision.cli describe path/to/photo.jpg
 ```
 
 Index a folder of angle-tagged photos. Writes `data/out/catalog.json` and debug images under `data/out/debug/`:
@@ -113,15 +113,9 @@ Debug images use green for Grok boxes and blue for detector boxes, with labels a
 
 Image-conditioned OWLv2 search from `data/references/` is implemented in `vision/references.py` (`image_guided_boxes`) and is not called by `index` or `ask`. It needs the detector weights and was not run here. See the manual steps.
 
-## Synthetic desk scene
+## Photos
 
-`data/test_scenes/desk/` is a fixture: several PNGs named `panXXX_tiltYYY.png`, plus `manifest.json` and `ground_truth.json`. The drawings are a blue bottle, a yellow lamp, a white Jardiance box with expiry text, and a green mug, placed at known azimuth and elevation using the FOV in `config.yaml`. They are not photographs and they are not Grok output. Regenerate them if you change the placeholder FOV:
-
-```bash
-python scripts/make_desk_scene.py
-```
-
-`data/test_scenes/m1/scene.png` is the single-image stand-in for `describe`.
+Do not generate stand-in pictures. Put real photos in `data/test_scenes/<scene>/` when you have them. A filename such as `pan060_tilt-10.jpg` carries pan and tilt. A `manifest.json` entry `{file, pan, tilt, timestamp}` wins when both are present. `data/test_scenes/desk/ground_truth.json` is a scoring template for `eval`. The image files themselves are not in this repo.
 
 ## Config
 
