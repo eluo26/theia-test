@@ -58,6 +58,8 @@ class LoadedFrame:
     tilt_deg: float
     timestamp: str | None
     image: np.ndarray
+    full_width: int = 0
+    full_height: int = 0
 
     @property
     def width(self) -> int:
@@ -66,6 +68,15 @@ class LoadedFrame:
     @property
     def height(self) -> int:
         return int(self.image.shape[0])
+
+    @property
+    def camera_width(self) -> int:
+        """Pixel width of the original photo. The working image may be smaller."""
+        return self.full_width or self.width
+
+    @property
+    def camera_height(self) -> int:
+        return self.full_height or self.height
 
 
 @dataclass
@@ -96,6 +107,7 @@ def load_scan(
     blur_threshold: float,
     sweep: tuple[float, float, float] | None = None,
     angles_csv: str | Path | None = None,
+    max_edge: int | None = None,
 ) -> list[LoadedFrame]:
     """Load stills from a directory, or sample a video file."""
     path = Path(source)
@@ -121,10 +133,10 @@ def load_scan(
         raise IngestError(f"Expected an image directory or a video file: {path}")
     if sweep is not None or angles_csv is not None:
         raise IngestError("--sweep and --angles-csv apply to a video file, not an image folder.")
-    return ingest_directory(path)
+    return ingest_directory(path, max_edge=max_edge)
 
 
-def ingest_directory(scan_dir: Path) -> list[LoadedFrame]:
+def ingest_directory(scan_dir: Path, max_edge: int | None = None) -> list[LoadedFrame]:
     manifest = _load_manifest(scan_dir / "manifest.json")
     frames: list[LoadedFrame] = []
     images = sorted(
@@ -146,6 +158,7 @@ def ingest_directory(scan_dir: Path) -> list[LoadedFrame]:
                 continue
             pan, tilt = parsed
             timestamp = None
+        image, full_w, full_h = load_working_image(image_path, max_edge)
         frames.append(
             LoadedFrame(
                 source_file=image_path.name,
@@ -153,7 +166,9 @@ def ingest_directory(scan_dir: Path) -> list[LoadedFrame]:
                 pan_deg=pan,
                 tilt_deg=tilt,
                 timestamp=timestamp,
-                image=load_rgb(image_path),
+                image=image,
+                full_width=full_w,
+                full_height=full_h,
             )
         )
     if not frames:
@@ -242,10 +257,46 @@ def keep_sharpest_per_bucket(samples: list[SampledFrame], blur_threshold: float)
     return list(kept.values())
 
 
+_SWAP_ORIENTATION = {5, 6, 7, 8}
+
+
 def load_rgb(path: Path) -> np.ndarray:
+    image, _full_w, _full_h = load_working_image(path, None)
+    return image
+
+
+def load_working_image(path: Path, max_edge: int | None) -> tuple[np.ndarray, int, int]:
+    """RGB array for indexing, plus the original photo size after EXIF orientation.
+
+    Phone JPEGs are decoded toward max_edge so a 12 MP still is not held in full
+    while the vision call runs. Boxes are mapped back onto the original size.
+    """
     with Image.open(path) as image:
+        full_w, full_h = image.size
+        orientation = image.getexif().get(274)
+        if orientation in _SWAP_ORIENTATION:
+            full_w, full_h = full_h, full_w
+        if (
+            max_edge
+            and max_edge > 0
+            and image.format == "JPEG"
+            and max(image.size) > max_edge
+        ):
+            image.draft("RGB", (max_edge, max_edge))
         turned = ImageOps.exif_transpose(image)
-        return np.asarray(turned.convert("RGB"))
+        if turned is None:
+            turned = image
+        if max_edge and max_edge > 0 and max(turned.size) > max_edge:
+            scale = max_edge / float(max(turned.size))
+            turned = turned.resize(
+                (
+                    max(1, int(round(turned.size[0] * scale))),
+                    max(1, int(round(turned.size[1] * scale))),
+                ),
+                Image.Resampling.BILINEAR,
+            )
+        array = np.asarray(turned.convert("RGB"))
+    return array, int(full_w), int(full_h)
 
 
 def _load_manifest(path: Path) -> dict[str, ManifestEntry]:

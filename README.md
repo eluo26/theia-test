@@ -52,13 +52,13 @@ Describe one real photo. Needs a key in `.env`. This repo does not include a sam
 python -m vision.cli describe path/to/photo.jpg
 ```
 
-Index a folder of angle-tagged photos. Writes `data/out/catalog.json` and debug images under `data/out/debug/`:
+Index a folder of angle-tagged photos. Writes `data/out/catalog.json`. Annotated images are written only when you pass `--debug`:
 
 ```bash
 python -m vision.cli index data/test_scenes/desk
 ```
 
-Ask where something is. This indexes the folder, then prints one `QueryResult` JSON object. `range_m` is always null:
+Ask where something is. The first run builds the catalog. A later ask reuses it when the photos are unchanged, then prints one `QueryResult` JSON object. `range_m` is always null:
 
 ```bash
 python -m vision.cli ask data/test_scenes/desk "where's my blue water bottle?"
@@ -84,9 +84,17 @@ Or a sidecar CSV with header `timestamp_s,pan,tilt`. Pan and tilt are interpolat
 python -m vision.cli index sweep.mp4 --angles-csv angles.csv
 ```
 
-`ask` accepts the same `--sweep` and `--angles-csv` flags. `--out-dir` redirects `catalog.json` and debug images. `--no-cache` ignores `data/cache/`.
+`ask` accepts the same `--sweep` and `--angles-csv` flags. `--out-dir` redirects `catalog.json`. `--debug` writes annotated images. `--no-cache` ignores `data/cache/` and rebuilds the catalog.
 
 Without `OPENAI_API_KEY` (or `XAI_API_KEY` when `provider` is `xai`), `index`, `ask`, and `eval` exit with a message that points at the key page and `.env`. They do not invent a model name. If a live call fails, the error points at the provider docs.
+
+## Testing locally
+
+On this Windows machine, call the virtual environment's Python directly. PowerShell blocks `Activate.ps1`. From the repo root, `.\.venv\Scripts\python.exe -m vision.cli check-config` should print `OPENAI_API_KEY: present` and does not print the key.
+
+The current scene is real JPEGs in `data\test_scenes\side`, named like `pan0_tilt0.jpg`. The phone originals were HEIC (`pan0_tilt0.jpg.HEIC`) and are ignored. The number in the name is the camera angle: positive pan is to the right, and tilt 0 is level.
+
+Check one photo, then the folder, then a question about an object that is actually in the pictures: `.\.venv\Scripts\python.exe -m vision.cli describe data\test_scenes\side\pan0_tilt0.jpg`, then `.\.venv\Scripts\python.exe -m vision.cli index data\test_scenes\side`, then `.\.venv\Scripts\python.exe -m vision.cli ask data\test_scenes\side "where is the blue water bottle?"`. A repeat ask reuses `data\out\catalog.json` when the photos have not changed, so a follow-up question is one model call. Debug images are not written unless you pass `--debug`.
 
 ## Library
 
@@ -101,17 +109,17 @@ result = locate("where's my blue water bottle?", catalog)
 
 ## Pipeline
 
-1. Ingest stills. `pan060_tilt-10.jpg` supplies pan and tilt. `manifest.json` entries `{file, pan, tilt, timestamp}` win over the filename. Full resolution is kept.
+1. Ingest stills. `pan060_tilt-10.jpg` supplies pan and tilt. `manifest.json` entries `{file, pan, tilt, timestamp}` win over the filename. The working copy is capped at `api_max_edge`. Angles use the original photo size.
 2. Undistort when `fx`, `fy`, `cx`, `cy`, and `dist_coeffs` are all set. Those intrinsics also override the FOV model. Tile with `tile_grid` `[columns, rows]` and `tile_overlap`.
 3. Each tile goes to the configured fast vision model (structured vision). Calls run with `max_concurrency` and exponential backoff. Invalid JSON is retried once, then that tile is logged and skipped. The cache key is the SHA-256 of the image bytes, prompt, model, and image detail.
 4. For each vision detection, the local detector runs on that tile with the label as the text query. If IoU is at least `refine_iou`, the detector box is kept (`box_source` `detector`). Otherwise the vision box is kept and confidence is lower.
 5. The box center becomes a camera ray, rotated by tilt about x and then pan about vertical. Azimuth is `atan2(dx, dz)`. Elevation is `atan2(dy, sqrt(dx^2+dz^2))`. This is the full rotation, not a small-angle shortcut.
 6. Detections merge when the rapidfuzz token ratio is at least `label_sim` and the angular separation is at most `merge_deg`. The representative view is the one closest to its frame center. Ids are `obj_001`, `obj_002`, ... in a stable order.
-7. The question plus catalog text (id, label, description, count, drug name only) goes to the configured reasoning model. It returns status, object id, up to three candidates, confidence, and a reason.
-8. The chosen object is cropped with `crop_pad`. The fast vision model is asked whether the crop is that label and to return a tight box. The detector runs on the crop too. The tighter box is kept when the two agree, then azimuth and elevation are recomputed.
+7. The question plus catalog text (id, label, description, count, drug name only) goes to `query_model`. `fast` uses the configured fast model. It returns status, object id, up to three candidates, confidence, and a reason.
+8. When `verify_match` is true, the chosen object is cropped with `crop_pad`. The fast vision model is asked whether the crop is that label and to return a tight box. The detector runs on the crop too. The tighter box is kept when the two agree, then azimuth and elevation are recomputed. It is off by default so a question does not wait on a second image call.
 9. With `clinic_mode: true`, `drug_name` is fuzzy-matched against `data/inventory.json` and the match is attached to `metadata.inventory`.
 
-Debug images use green for vision-model boxes and blue for detector boxes, with labels and ids. The green legend uses the active provider name from `config.yaml` (`OpenAI` or `xAI`).
+Debug images, written with `--debug` or `save_debug: true`, use green for vision-model boxes and blue for detector boxes, with labels and ids. The green legend uses the active provider name from `config.yaml` (`OpenAI` or `xAI`).
 
 Image-conditioned OWLv2 search from `data/references/` is implemented in `vision/references.py` (`image_guided_boxes`) and is not called by `index` or `ask`. It needs the detector weights and was not run here. See the manual steps.
 

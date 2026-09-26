@@ -126,7 +126,7 @@ def test_locate_returns_the_json_contract(tmp_path, monkeypatch):
     assert payload["metadata"]["count"] == 1
     assert payload["metadata"]["last_seen"] == "2026-09-26T15:40:00"
     assert "inventory" not in payload["metadata"]
-    assert seen["model"] == settings.reasoning_model
+    assert seen["model"] == settings.active_query_model
     assert "drug_name" in catalog_text(catalog)
     json.dumps(payload)
 
@@ -175,7 +175,7 @@ def test_tighter_detector_box_on_the_crop(tmp_path, monkeypatch):
         created_at="2026-09-26T16:00:00",
         scan_dir=str(tmp_path),
     )
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, verify_match=True)
 
     def fake_text(*args, **kwargs):
         return (

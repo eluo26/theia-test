@@ -45,7 +45,7 @@ def test_missing_config_file(tmp_path: Path):
 
 def test_invalid_config_reports_the_field(tmp_path: Path):
     source = Path("config.yaml").read_text(encoding="utf-8")
-    broken = source.replace("image_detail: high", "image_detail: ultra")
+    broken = source.replace("image_detail: low", "image_detail: ultra")
     path = tmp_path / "config.yaml"
     path.write_text(broken, encoding="utf-8")
     with pytest.raises(ConfigError, match="image_detail"):

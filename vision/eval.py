@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict
 
 from vision.config import REPO_ROOT, Settings, load_settings
 from vision.geometry import angular_distance_deg
-from vision.index import build_catalog
+from vision.index import catalog_for_query
 from vision.ingest import IngestError
 from vision.matching import token_ratio
 from vision.query import locate
@@ -101,7 +101,7 @@ def evaluate_scene(
             "After a real scan, add objects you measured as "
             '{query, expected_label, az, el}.'
         )
-    catalog = build_catalog(
+    catalog = catalog_for_query(
         scene_dir,
         settings=settings,
         client_factory=client_factory,

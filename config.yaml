@@ -32,8 +32,9 @@ xai_base_url: https://api.x.ai/v1
 xai_api_key_env: XAI_API_KEY
 
 # Chat Completions image detail. OpenAI documents auto, low, high, and original.
+# low is the fast path: fewer image tokens, shorter calls.
 # https://platform.openai.com/docs/guides/images-vision
-image_detail: high
+image_detail: low
 
 # Client timeout in seconds. Reasoning models can take a while.
 request_timeout_s: 3600
@@ -54,9 +55,17 @@ cx: null
 cy: null
 dist_coeffs: null
 
-tile_grid: [2, 2]
+# One call per photo. A 2x2 grid is available when small label text matters.
+tile_grid: [1, 1]
 tile_overlap: 0.15
-max_concurrency: 4
+max_concurrency: 8
+# Longest side sent to the vision model. Boxes are mapped back to the original photo.
+api_max_edge: 768
+max_objects_per_image: 12
+# Questions use the fast model so a follow-up stays short. Set reasoning to use the flagship.
+query_model: fast
+save_debug: false
+verify_match: false
 refine_iou: 0.3
 label_sim: 85
 merge_deg: 8

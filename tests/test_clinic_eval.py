@@ -72,6 +72,6 @@ def test_empty_ground_truth_does_not_index(tmp_path: Path, monkeypatch):
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("eval must not index a scene with no score sheet")
 
-    monkeypatch.setattr("vision.eval.build_catalog", fail_if_called)
+    monkeypatch.setattr("vision.eval.catalog_for_query", fail_if_called)
     with pytest.raises(EvalError, match="no queries"):
         evaluate_scene(tmp_path)

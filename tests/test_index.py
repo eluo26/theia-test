@@ -6,7 +6,7 @@ from PIL import Image
 
 from vision.config import load_settings
 from vision.detector import DetectorHit, NullDetector, ScriptedDetector
-from vision.index import build_catalog, merge_detections, write_catalog
+from vision.index import build_catalog, catalog_for_query, merge_detections, write_catalog
 from vision.schemas import Catalog, Detection, IndexResponse
 
 
@@ -133,7 +133,7 @@ def test_build_catalog_merges_two_views_and_writes_json(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr("vision.grok_client.parse_image_bytes", fake_image)
-    catalog = build_catalog(tmp_path, settings=settings, detector=NullDetector())
+    catalog = build_catalog(tmp_path, settings=settings, detector=NullDetector(), save_debug=True)
     assert len(catalog.objects) == 1
     assert catalog.objects[0].object_id == "obj_001"
     assert catalog.objects[0].azimuth_deg == pytest.approx(10.0, abs=1e-6)
@@ -208,3 +208,70 @@ def test_invalid_tile_is_skipped(tmp_path, monkeypatch, caplog):
     assert catalog.objects == []
     assert boom.calls == 2
     assert "skipping tile" in caplog.text
+
+
+def test_downscaled_photo_keeps_the_center_on_pan(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    Image.new("RGB", (1600, 800), (255, 255, 255)).save(tmp_path / "pan020_tilt000.jpg", quality=85)
+    settings = _settings(tmp_path, api_max_edge=100)
+
+    def fake_image(*args, **kwargs):
+        return (
+            IndexResponse.model_validate(
+                {
+                    "objects": [
+                        {
+                            "label": "blue water bottle",
+                            "description": "centered bottle",
+                            "box": [400, 300, 600, 700],
+                            "count": 1,
+                            "drug_name": None,
+                            "expiry_text": None,
+                        }
+                    ]
+                }
+            ),
+            "miss",
+        )
+
+    monkeypatch.setattr("vision.grok_client.parse_image_bytes", fake_image)
+    catalog = build_catalog(tmp_path, settings=settings, detector=NullDetector())
+    obj = catalog.objects[0]
+    assert obj.image_width == 1600
+    assert obj.image_height == 800
+    assert obj.azimuth_deg == pytest.approx(20.0, abs=1e-6)
+    assert obj.elevation_deg == pytest.approx(0.0, abs=1e-6)
+
+
+def test_second_query_reuses_the_catalog(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    Image.new("RGB", (80, 40), (255, 255, 255)).save(tmp_path / "pan000_tilt000.png")
+    settings = _settings(tmp_path)
+    calls = {"n": 0}
+
+    def fake_image(*args, **kwargs):
+        calls["n"] += 1
+        return (
+            IndexResponse.model_validate(
+                {
+                    "objects": [
+                        {
+                            "label": "green mug",
+                            "description": "green mug",
+                            "box": [100, 100, 400, 800],
+                            "count": 1,
+                            "drug_name": None,
+                            "expiry_text": None,
+                        }
+                    ]
+                }
+            ),
+            "miss",
+        )
+
+    monkeypatch.setattr("vision.grok_client.parse_image_bytes", fake_image)
+    first = catalog_for_query(tmp_path, settings=settings, detector=NullDetector())
+    second = catalog_for_query(tmp_path, settings=settings, detector=NullDetector())
+    assert calls["n"] == 1
+    assert second.objects[0].object_id == first.objects[0].object_id
+    assert second.fingerprint == first.fingerprint

@@ -135,7 +135,7 @@ def test_index_and_ask_succeed_when_the_api_is_mocked(tmp_path, monkeypatch, cap
         )
 
     def fake_text(prompt, settings, *, response_model, model, **kwargs):
-        assert model == settings.reasoning_model
+        assert model == settings.active_query_model
         assert response_model is QueryDecision
         return (
             QueryDecision(
