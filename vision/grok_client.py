@@ -21,7 +21,10 @@ from typing import Any, TypeVar
 import httpx
 from openai import OpenAI
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
 from pydantic import BaseModel, ValidationError
+
+register_heif_opener()
 
 from vision.config import Settings, require_api_key
 from vision.schemas import IndexResponse
@@ -55,6 +58,7 @@ _KEY_PATTERN = re.compile(r"(?:xai-|sk-)[A-Za-z0-9_\-]{8,}")
 _AUTH_PATTERN = re.compile(r"(?i)authorization:\s*bearer\s+\S+")
 # OpenAI image input: PNG, JPEG, WEBP, and non-animated GIF.
 # https://platform.openai.com/docs/guides/images-vision
+# HEIC is accepted on disk and converted to JPEG before it reaches this map.
 _ALLOWED_SUFFIXES = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -294,6 +298,10 @@ def _load_image_bytes(path: Path, settings: Settings) -> tuple[bytes, str]:
     if not path.is_file():
         raise GrokCallError(f"Image not found: {path}")
     suffix = path.suffix.lower()
+    if suffix == ".heic":
+        # Convert before the size check. describe_image then downscales, and the
+        # bytes that reach the API are JPEG. HEIC itself is never an image part.
+        return _heic_file_as_jpeg(path), "image/jpeg"
     mime = _ALLOWED_SUFFIXES.get(suffix)
     if mime is None:
         allowed = ", ".join(sorted(_ALLOWED_SUFFIXES))
@@ -315,6 +323,28 @@ def _load_image_bytes(path: Path, settings: Settings) -> tuple[bytes, str]:
             f"{settings.max_image_bytes} bytes ({settings.docs_urls[-1]})."
         )
     return image_bytes, mime
+
+
+def _heic_file_as_jpeg(path: Path) -> bytes:
+    """Decode a HEIC still and return upright JPEG bytes.
+
+    The vision API does not accept HEIC. EXIF orientation is baked in here so
+    the JPEG matches the RGB path used when a folder is indexed.
+    """
+    try:
+        with Image.open(path) as image:
+            image.load()
+            turned = ImageOps.exif_transpose(image)
+            if turned is None:
+                turned = image
+            buffer = io.BytesIO()
+            turned.convert("RGB").save(buffer, format="JPEG", quality=95)
+            encoded = buffer.getvalue()
+    except Exception as exc:
+        raise GrokCallError(f"Could not convert HEIC to JPEG: {path}: {exc}") from exc
+    if not encoded:
+        raise GrokCallError(f"Image file is empty: {path}")
+    return encoded
 
 
 def _upright_image_bytes(image_bytes: bytes, mime: str) -> bytes:

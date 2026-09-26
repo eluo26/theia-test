@@ -190,6 +190,44 @@ def test_unsupported_image_type(tmp_path):
         describe_image(image, settings, client_factory=_client_factory(_FakeCompletions([])))
 
 
+def _write_heic(path: Path) -> None:
+    """Write a tiny HEIC. Skip only when no encoder can produce one."""
+    errors: list[str] = []
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+        Image.new("RGB", (8, 8), (9, 8, 7)).save(path, format="HEIF")
+        if path.is_file() and path.stat().st_size > 0:
+            return
+        errors.append("pillow-heif encode produced an empty file")
+    except Exception as exc:
+        errors.append(f"pillow-heif encode failed: {exc}")
+    pytest.skip("writing HEIC is impossible: " + "; ".join(errors))
+
+
+def test_heic_is_sent_as_jpeg(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    settings = _settings(tmp_path)
+    path = tmp_path / "IMG_0205.HEIC"
+    _write_heic(path)
+    completions = _FakeCompletions([_completion(_ok_response())])
+    describe_image(
+        path,
+        settings,
+        client_factory=_client_factory(completions),
+        sleeper=lambda _delay: None,
+    )
+    url = completions.calls[0]["messages"][0]["content"][0]["image_url"]["url"]
+    assert url.startswith("data:image/jpeg;base64,")
+    assert "image/heic" not in url
+    sent = _sent_image_bytes(completions.calls[0])
+    assert sent.startswith(b"\xff\xd8")
+    assert b"ftyp" not in sent[:16]
+    with Image.open(io.BytesIO(sent)) as image:
+        assert image.format == "JPEG"
+
+
 def test_webp_suffix_is_accepted(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", _api_key())
     settings = _settings(tmp_path)

@@ -23,9 +23,9 @@ macOS or Linux: `python3 -m venv .venv`, then `source .venv/bin/activate` and `p
 
 ## Photos
 
-Put JPEGs in `data/test_scenes/<scene>/`. The filename is the camera angle: `pan0_tilt0.jpg` is home and level, `pan30_tilt0.jpg` is 30° to the right, `pan-30_tilt0.jpg` is 30° to the left. Positive pan is right. Tilt 0 is level. Positive tilt is up.
+Put photos in `data/test_scenes/<scene>/`. The filename is the camera angle: `pan0_tilt0.jpg` is home and level, `pan30_tilt0.jpg` is 30° to the right, `pan-30_tilt0.jpg` is 30° to the left. Positive pan is right. Tilt 0 is level. Positive tilt is up.
 
-Use JPEG from the phone's main lens. HEIC files are ignored. `manifest.json` and `ground_truth.json` start empty. `describe`, `index`, and `ask` do not read object names from them.
+JPEG and HEIC from the phone's main lens are accepted. Untagged files, including HEIC, are angled by sorted order (pan 0, then 30, then 60, and so on). `manifest.json` and `ground_truth.json` start empty. `describe`, `index`, and `ask` do not read object names from them.
 
 `data/test_scenes/side/ground_truth.json` is a score sheet for the side photos. Those angles are hand estimates from the filenames and the photos, not a survey. An object near the middle of a frame uses that frame's pan and tilt 0. An object clearly off-center is shifted by a rough fraction of the configured field of view.
 

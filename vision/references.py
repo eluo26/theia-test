@@ -18,7 +18,7 @@ TODO_REFERENCE_SEARCH = (
     "(about 1 GB) and has not been run in this environment."
 )
 
-_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
 
 
 def reference_note(references_dir: Path) -> str | None:

@@ -6,6 +6,9 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from pillow_heif import register_heif_opener
+
+register_heif_opener()
 
 from vision.schemas import Detection, IndexedObject, norm_box_to_pixels
 

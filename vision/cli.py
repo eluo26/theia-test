@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     describe.add_argument(
         "image",
         type=Path,
-        help="A .jpg, .jpeg, .png, .webp, or non-animated .gif file",
+        help="A .jpg, .jpeg, .png, .webp, .heic, or non-animated .gif file. HEIC is converted to JPEG before the vision call.",
     )
     describe.add_argument(
         "--out-dir",

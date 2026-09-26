@@ -1,10 +1,10 @@
 """Load stills, or sample a sweep video into frames.
 
 Filenames such as pan060_tilt-10.jpg supply pan and tilt. A manifest.json
-of {file, pan, tilt, timestamp} wins when both are present. Other images
-are sorted by an integer in the name when one exists, otherwise by filename,
-and assigned pan 0, 30, 60, ... with tilt 0. Images stay at
-full resolution.
+of {file, pan, tilt, timestamp} wins when both are present. Other images,
+including .heic and .HEIC, are sorted by an integer in the name when one
+exists, otherwise by filename, and assigned pan 0, 30, 60, ... with tilt 0.
+Images stay at full resolution.
 
 Video needs either a sidecar CSV (timestamp_s, pan, tilt), interpolated per
 sampled frame, or a constant-speed --sweep start_pan end_pan tilt. Frames are
@@ -25,11 +25,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
 from pydantic import BaseModel, ConfigDict
+
+register_heif_opener()
 
 logger = logging.getLogger("vision.ingest")
 
-_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"}
 _VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 _FRAME_NAME = re.compile(
     r"pan(?P<pan>-?\d+(?:\.\d+)?)_tilt(?P<tilt>-?\d+(?:\.\d+)?)",
@@ -41,6 +44,15 @@ _UNTAGGED_PAN_STEP = 30.0
 
 class IngestError(ValueError):
     """The scan directory or video could not be turned into frames."""
+
+
+def no_images_message(scan_dir: Path) -> str:
+    """What to tell the user when a folder has no accepted stills."""
+    return (
+        f"No images in {scan_dir}. "
+        "Add photos, name files pan030_tilt-10.jpg, or add manifest.json with file, pan, tilt, timestamp. "
+        "HEIC files in the folder are accepted and angled by sorted order."
+    )
 
 
 class ManifestEntry(BaseModel):
@@ -208,10 +220,7 @@ def load_still_frames(
 def ingest_directory(scan_dir: Path, max_edge: int | None = None) -> list[LoadedFrame]:
     frames = load_still_frames(still_frame_meta(scan_dir), max_edge)
     if not frames:
-        raise IngestError(
-            f"No images in {scan_dir}. "
-            "Add photos, name files pan030_tilt-10.jpg, or add manifest.json with file, pan, tilt, timestamp."
-        )
+        raise IngestError(no_images_message(scan_dir))
     return frames
 
 
@@ -304,8 +313,10 @@ def load_rgb(path: Path) -> np.ndarray:
 def load_working_image(path: Path, max_edge: int | None) -> tuple[np.ndarray, int, int]:
     """RGB array for indexing, plus the original photo size after EXIF orientation.
 
-    Phone JPEGs are decoded toward max_edge so a 12 MP still is not held in full
-    while the vision call runs. Boxes are mapped back onto the original size.
+    Phone photos, including HEIC, are decoded toward max_edge so a 12 MP still is
+    not held in full while the vision call runs. Boxes are mapped back onto the
+    original size. pillow-heif registers the HEIC opener; the RGB, EXIF, and
+    resize steps below are the same as for JPEG.
     """
     with Image.open(path) as image:
         full_w, full_h = image.size

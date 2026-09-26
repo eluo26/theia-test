@@ -70,15 +70,15 @@ python -m vision.cli index sweep.mp4 --angles-csv angles.csv
 
 `--sweep START_PAN END_PAN TILT` treats the clip as a constant-speed pan at a fixed tilt. The CSV header is `timestamp_s,pan,tilt`. Frames are taken every `video_sample_every_s` (0.5 s). Frames whose Laplacian variance is below `blur_threshold` (100) are dropped. The sharpest frame in each 1° pan/tilt bucket is kept.
 
-Accepted stills are PNG, JPEG, WEBP, and non-animated GIF. HEIC is ignored. A sideways phone JPEG is rotated from its EXIF tag before the model sees it, so boxes match the upright picture.
+Accepted stills are PNG, JPEG, WEBP, non-animated GIF, and HEIC. HEIC is converted to JPEG before a vision call. A sideways phone photo is rotated from its EXIF tag before the model sees it, so boxes match the upright picture.
 
 ## Photos and angles
 
-`pan30_tilt-10.jpg` means pan 30°, tilt −10°. A `manifest.json` entry `{file, pan, tilt, timestamp}` overrides the filename when that file is present. The desk manifest ships with `"frames": []`.
+`pan30_tilt-10.jpg` means pan 30°, tilt −10°. A `manifest.json` entry `{file, pan, tilt, timestamp}` overrides the filename when that file is present. Untagged photos, including HEIC, are angled by sorted order: pan 0, 30, 60, and so on. The desk manifest ships with `"frames": []`.
 
 `ground_truth.json` is only for `eval`. Each row is `{query, expected_label, az, el}`. The committed file has `"queries": []`. Fill it after you measure a real scene. `describe`, `index`, and `ask` do not read object names from either file.
 
-The repo does not ship sample photos. Do not generate stand-ins. Shoot the phone main lens, not ultrawide, as JPEG. Objects at about 2–3 m and a photo about every 20° of pan are enough for a first scene.
+The repo does not ship sample photos. Do not generate stand-ins. Shoot the phone main lens, not ultrawide, as JPEG or HEIC. Objects at about 2–3 m and a photo about every 20° of pan are enough for a first scene.
 
 ## Pipeline
 
@@ -135,7 +135,6 @@ Transport retries cover connection failures, timeouts, and HTTP 408, 409, 429, a
 
 - It does not draw a UI or move the laser.
 - It does not estimate distance.
-- It does not read HEIC.
 - It does not invent a model id when a call fails.
 - It does not search `data/references/` during `index` or `ask`.
 - `pytest` mocks the API. A live call needs a real photo and a key in `.env`.

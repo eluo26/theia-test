@@ -8,12 +8,30 @@ import pytest
 from PIL import Image
 
 from vision.ingest import (
+    IngestError,
     ingest_directory,
     ingest_video,
     keep_sharpest_per_bucket,
     parse_angles_from_name,
     SampledFrame,
 )
+from vision.preprocess import encode_jpeg
+
+
+def _write_heic(path: Path, color: tuple[int, int, int]) -> None:
+    """Write a tiny HEIC. Skip only when no encoder can produce one."""
+    errors: list[str] = []
+    try:
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+        Image.new("RGB", (8, 8), color).save(path, format="HEIF")
+        if path.is_file() and path.stat().st_size > 0:
+            return
+        errors.append("pillow-heif encode produced an empty file")
+    except Exception as exc:
+        errors.append(f"pillow-heif encode failed: {exc}")
+    pytest.skip("writing HEIC is impossible: " + "; ".join(errors))
 
 
 def test_filename_angles():
@@ -49,6 +67,33 @@ def test_untagged_names_take_pan_steps_and_tagged_names_keep_angles(
     assert "b.jpg assigned pan 30" in logged
     assert "10.jpg assigned pan 60" in logged
     assert not any("pan30_tilt-10.jpg" in message for message in logged)
+
+
+def test_heic_files_are_ingested_with_pan_from_sorted_order(tmp_path: Path):
+    """IMG_0205.HEIC is the lower integer, so it is pan 0 and IMG_0206.HEIC is pan 30."""
+    _write_heic(tmp_path / "IMG_0206.HEIC", (2, 4, 6))
+    _write_heic(tmp_path / "IMG_0205.HEIC", (1, 3, 5))
+    frames = ingest_directory(tmp_path)
+    by_name = {frame.source_file: frame for frame in frames}
+    assert by_name["IMG_0205.HEIC"].pan_deg == 0
+    assert by_name["IMG_0205.HEIC"].tilt_deg == 0
+    assert by_name["IMG_0206.HEIC"].pan_deg == 30
+    assert by_name["IMG_0206.HEIC"].tilt_deg == 0
+    image = by_name["IMG_0205.HEIC"].image
+    assert image.shape == (8, 8, 3)
+    assert image.dtype == np.uint8
+    encoded = encode_jpeg(image)
+    assert encoded.startswith(b"\xff\xd8")
+    assert b"ftyp" not in encoded[:16]
+
+
+def test_empty_folder_mentions_angles_manifest_and_heic(tmp_path: Path):
+    with pytest.raises(IngestError) as caught:
+        ingest_directory(tmp_path)
+    message = str(caught.value)
+    assert "pan030_tilt-10.jpg" in message
+    assert "manifest.json" in message
+    assert "HEIC files in the folder are accepted and angled by sorted order." in message
 
 
 def test_numbered_untagged_names_sort_by_integer(tmp_path: Path):

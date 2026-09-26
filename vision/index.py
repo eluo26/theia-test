@@ -25,6 +25,7 @@ from vision.ingest import (
     _IMAGE_SUFFIXES,
     load_scan,
     load_still_frames,
+    no_images_message,
     still_frame_meta,
 )
 from vision.matching import token_ratio
@@ -289,10 +290,7 @@ def _load_changed_stills(
     """Decode and return only stills whose file or angle tag is not already remembered."""
     meta = still_frame_meta(source)
     if not meta:
-        raise IngestError(
-            f"No images in {source}. "
-            "Add photos, name files pan030_tilt-10.jpg, or add manifest.json with file, pan, tilt, timestamp."
-        )
+        raise IngestError(no_images_message(source))
     stored = _stored_frames(source, settings) if use_cache else {}
     reused: list[Detection] = []
     memories: list[FrameMemory] = []
