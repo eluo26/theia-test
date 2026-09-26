@@ -31,12 +31,15 @@ _cache_lock = threading.Lock()
 
 logger = logging.getLogger("vision.client")
 
-INDEX_PROMPT = """You are the scene-understanding module for a tabletop laser turret.
-List every distinct physical object that is visible. Skip the empty wall, floor, and bare tabletop.
+def index_prompt(max_objects: int) -> str:
+    """Short scene list. A cap keeps the later question small enough to answer quickly."""
+    return f"""You are the scene-understanding module for a tabletop laser turret.
+List the distinct objects a person might ask you to find. At most {max_objects}.
+Skip walls, the floor, the ceiling, the bare table, shadows, and small background clutter.
 
 For each object provide:
 - label: a short noun phrase, such as "blue water bottle"
-- description: color, brand, any readable text, and neighboring objects
+- description: color, brand, any readable text, and one neighboring object. One sentence.
 - box: a tight bounding box as [x1, y1, x2, y2], normalized from 0 to 1000, origin at the top-left
 - count: how many of that same object sit inside the box
 - drug_name: the medication name if the object is a drug package, otherwise null
@@ -44,6 +47,9 @@ For each object provide:
 
 Only include objects you can actually see. Do not invent hidden items.
 """
+
+
+INDEX_PROMPT = index_prompt(12)
 
 _KEY_PATTERN = re.compile(r"(?:xai-|sk-)[A-Za-z0-9_\-]{8,}")
 _AUTH_PATTERN = re.compile(r"(?i)authorization:\s*bearer\s+\S+")
@@ -100,11 +106,12 @@ def describe_image(
     """List objects in one image. Returns the parsed response and cache status."""
     path = Path(image_path)
     image_bytes, mime = _load_image_bytes(path, settings)
+    image_bytes, mime = _shrink_for_api(image_bytes, mime, settings.api_max_edge)
     return parse_image_bytes(
         image_bytes,
         mime,
         settings,
-        prompt=INDEX_PROMPT,
+        prompt=index_prompt(settings.max_objects_per_image),
         response_model=IndexResponse,
         model=settings.fast_model,
         client_factory=client_factory,
@@ -341,6 +348,33 @@ def _upright_image_bytes(image_bytes: bytes, mime: str) -> bytes:
     except Exception:
         return image_bytes
     return encoded or image_bytes
+
+
+def _shrink_for_api(image_bytes: bytes, mime: str, max_edge: int) -> tuple[bytes, str]:
+    """Downscale a large photo before upload. Smaller files are returned unchanged."""
+    if max_edge <= 0:
+        return image_bytes, mime
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            if max(image.size) <= max_edge:
+                return image_bytes, mime
+            turned = ImageOps.exif_transpose(image)
+            if turned is None:
+                turned = image
+            scale = max_edge / float(max(turned.size))
+            turned = turned.resize(
+                (
+                    max(1, int(round(turned.size[0] * scale))),
+                    max(1, int(round(turned.size[1] * scale))),
+                ),
+                Image.Resampling.BILINEAR,
+            )
+            buffer = io.BytesIO()
+            turned.convert("RGB").save(buffer, format="JPEG", quality=80)
+    except Exception:
+        return image_bytes, mime
+    encoded = buffer.getvalue()
+    return (encoded or image_bytes), "image/jpeg"
 
 
 def _messages(prompt: str, image_bytes: bytes, mime: str, detail: str) -> list[dict[str, Any]]:

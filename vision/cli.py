@@ -20,7 +20,7 @@ from pathlib import Path
 from vision.config import MissingAPIKeyError, api_key_is_present, load_settings, require_api_key
 from vision.eval import EvalError, evaluate_scene
 from vision.grok_client import GrokCallError, describe_image, redact
-from vision.index import build_catalog
+from vision.index import build_catalog, catalog_for_query
 from vision.ingest import IngestError
 from vision.query import locate, public_query_dict
 from vision.viz import annotate_image, legend_name
@@ -99,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     index.add_argument("--out-dir", type=Path, default=None)
     index.add_argument("--no-cache", action="store_true")
+    index.add_argument(
+        "--debug",
+        action="store_true",
+        help="Write annotated images under the output debug folder",
+    )
 
     ask = sub.add_parser("ask", help="Index a scan and print a QueryResult.")
     ask.add_argument("scan_dir", type=Path, help="Image folder or a video file")
@@ -112,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--angles-csv", type=Path)
     ask.add_argument("--out-dir", type=Path, default=None)
     ask.add_argument("--no-cache", action="store_true")
+    ask.add_argument(
+        "--debug",
+        action="store_true",
+        help="Write annotated images under the output debug folder",
+    )
 
     evaluate = sub.add_parser(
         "eval",
@@ -168,6 +178,12 @@ def _check_config(settings) -> int:
         f"api_key_env: {settings.api_key_env}",
         f"{settings.api_key_env}: {key_state}",
         f"image_detail: {settings.image_detail}",
+        f"query_model: {settings.active_query_model}",
+        f"tile_grid: {list(settings.tile_grid)}",
+        f"max_concurrency: {settings.max_concurrency}",
+        f"api_max_edge: {settings.api_max_edge}",
+        f"verify_match: {settings.verify_match}",
+        f"save_debug: {settings.save_debug}",
         f"request_timeout_s: {settings.request_timeout_s}",
         f"cache_dir: {settings.cache_path}",
         f"out_dir: {settings.out_path}",
@@ -177,18 +193,19 @@ def _check_config(settings) -> int:
     return 0
 
 
-def _video_kwargs(args) -> dict:
+def _video_kwargs(settings, args) -> dict:
     sweep = tuple(args.sweep) if getattr(args, "sweep", None) else None
     return {
         "sweep": sweep,
         "angles_csv": getattr(args, "angles_csv", None),
         "use_cache": not args.no_cache,
+        "save_debug": bool(settings.save_debug or getattr(args, "debug", False)),
     }
 
 
 def _index(settings, args) -> int:
     require_api_key(settings)
-    catalog = build_catalog(args.scan_dir, settings=settings, **_video_kwargs(args))
+    catalog = build_catalog(args.scan_dir, settings=settings, **_video_kwargs(settings, args))
     print(catalog.model_dump_json(indent=2))
     print(f"wrote {settings.out_path / 'catalog.json'}", file=sys.stderr)
     return 0
@@ -196,7 +213,7 @@ def _index(settings, args) -> int:
 
 def _ask(settings, args) -> int:
     require_api_key(settings)
-    catalog = build_catalog(args.scan_dir, settings=settings, **_video_kwargs(args))
+    catalog = catalog_for_query(args.scan_dir, settings=settings, **_video_kwargs(settings, args))
     result = locate(args.query, catalog, settings=settings, use_cache=not args.no_cache)
     print(json.dumps(public_query_dict(result), indent=2))
     return 0

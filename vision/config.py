@@ -65,6 +65,14 @@ class Settings(BaseModel):
     crop_pad: float = Field(ge=0)
     clinic_mode: bool
 
+    # fast uses the provider's fast model for questions. reasoning uses the
+    # flagship id. Both ids still come from config.yaml.
+    query_model: Literal["fast", "reasoning"] = "fast"
+    api_max_edge: int = Field(default=768, gt=0)
+    max_objects_per_image: int = Field(default=12, ge=1)
+    save_debug: bool = False
+    verify_match: bool = False
+
     detector: Literal["owlv2", "grounding_dino"]
     owlv2_model: str = Field(min_length=1)
     grounding_dino_model: str = Field(min_length=1)
@@ -101,6 +109,12 @@ class Settings(BaseModel):
         if self.provider == "openai":
             return self.openai_reasoning_model
         return self.grok_reasoning_model
+
+    @property
+    def active_query_model(self) -> str:
+        if self.query_model == "fast":
+            return self.fast_model
+        return self.reasoning_model
 
     @property
     def base_url(self) -> str:

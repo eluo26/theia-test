@@ -83,7 +83,7 @@ def locate(
         QUERY_PROMPT.format(catalog=catalog_text(catalog), query=query),
         settings,
         response_model=QueryDecision,
-        model=settings.reasoning_model,
+        model=settings.active_query_model,
         client_factory=client_factory,
         use_cache=use_cache,
     )
@@ -111,19 +111,21 @@ def locate(
     confidence = decision.confidence
     reason = decision.reason
     box_source = chosen.box_source
-    chosen_detector = detector_lib.resolve_detector(settings, detector)
-    try:
-        refined = _verify_crop(
-            chosen,
-            catalog,
-            settings,
-            client_factory=client_factory,
-            detector=chosen_detector,
-            use_cache=use_cache,
-        )
-    except GrokCallError as exc:
-        logger.warning("crop check failed for %s: %s", chosen.object_id, redact(str(exc)))
-        refined = None
+    refined = None
+    if settings.verify_match:
+        chosen_detector = detector_lib.resolve_detector(settings, detector)
+        try:
+            refined = _verify_crop(
+                chosen,
+                catalog,
+                settings,
+                client_factory=client_factory,
+                detector=chosen_detector,
+                use_cache=use_cache,
+            )
+        except GrokCallError as exc:
+            logger.warning("crop check failed for %s: %s", chosen.object_id, redact(str(exc)))
+            refined = None
     if refined is not None:
         bbox, azimuth, elevation, box_source, verify_reason, matched = refined
         if verify_reason:

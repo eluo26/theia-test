@@ -119,6 +119,15 @@ def encode_png(image: np.ndarray) -> bytes:
     return buffer.getvalue()
 
 
+def encode_jpeg(image: np.ndarray, *, quality: int = 80) -> bytes:
+    """JPEG payload for a vision call. The array is already the working size."""
+    buffer = io.BytesIO()
+    Image.fromarray(np.ascontiguousarray(image), mode="RGB").save(
+        buffer, format="JPEG", quality=quality
+    )
+    return buffer.getvalue()
+
+
 def _axis(length: int, count: int, overlap: float) -> list[tuple[int, int]]:
     if count <= 1:
         return [(0, length)]

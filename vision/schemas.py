@@ -130,6 +130,7 @@ class Catalog(BaseModel):
     objects: list[CatalogObject]
     created_at: str
     scan_dir: str | None = None
+    fingerprint: str | None = None
 
 
 class Candidate(BaseModel):

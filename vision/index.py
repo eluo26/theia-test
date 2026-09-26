@@ -5,10 +5,13 @@ Public entry point: build_catalog(scan_dir) -> Catalog.
 
 from __future__ import annotations
 
-import asyncio
+import hashlib
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+
+from pydantic import ValidationError
 
 from vision import detector as detector_lib
 from vision import grok_client
@@ -16,9 +19,9 @@ from vision.config import Settings, load_settings
 from vision.detector import GROK_ONLY_CONFIDENCE, refine_box
 from vision.geometry import angular_distance_deg, box_center_angles
 from vision.grok_client import GrokCallError, redact
-from vision.ingest import LoadedFrame, load_scan
+from vision.ingest import LoadedFrame, _IMAGE_SUFFIXES, load_scan
 from vision.matching import token_ratio
-from vision.preprocess import Tile, encode_png, make_tiles, map_norm_box_to_frame, prepare_frame, shift_box
+from vision.preprocess import Tile, encode_jpeg, make_tiles, prepare_frame, shift_box
 from vision.schemas import Catalog, CatalogObject, Detection, IndexResponse, norm_box_to_pixels
 from vision.viz import annotate_detections, legend_name
 
@@ -34,6 +37,7 @@ def build_catalog(
     sweep: tuple[float, float, float] | None = None,
     angles_csv: str | Path | None = None,
     use_cache: bool = True,
+    save_debug: bool | None = None,
 ) -> Catalog:
     """Index angle-tagged photos (or one sweep video) and write catalog.json."""
     settings = settings if settings is not None else load_settings()
@@ -45,6 +49,7 @@ def build_catalog(
         blur_threshold=settings.blur_threshold,
         sweep=sweep,
         angles_csv=angles_csv,
+        max_edge=settings.api_max_edge,
     )
     _log_resolution_once(frames, settings)
     for frame in frames:
@@ -61,15 +66,23 @@ def build_catalog(
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     scan_path = source.resolve()
     objects = merge_detections(detections, settings, created_at=created_at)
-    catalog = Catalog(objects=objects, created_at=created_at, scan_dir=str(scan_path))
-    write_catalog(catalog, settings.out_path / "catalog.json")
-    _write_debug(
-        frames,
-        detections,
-        objects,
-        settings.out_path / "debug",
-        legend=legend_name(settings.provider),
+    catalog = Catalog(
+        objects=objects,
+        created_at=created_at,
+        scan_dir=str(scan_path),
+        fingerprint=scan_fingerprint(source, settings, sweep=sweep, angles_csv=angles_csv),
     )
+    write_catalog(catalog, settings.out_path / "catalog.json")
+    if save_debug is None:
+        save_debug = settings.save_debug
+    if save_debug:
+        _write_debug(
+            frames,
+            detections,
+            objects,
+            settings.out_path / "debug",
+            legend=legend_name(settings.provider),
+        )
     logger.info("catalog objects=%s path=%s", len(objects), settings.out_path / "catalog.json")
     return catalog
 
@@ -128,68 +141,146 @@ def write_catalog(catalog: Catalog, path: Path) -> Path:
     return path
 
 
+def catalog_for_query(
+    scan_dir: str | Path,
+    *,
+    settings: Settings | None = None,
+    client_factory=None,
+    detector=None,
+    sweep: tuple[float, float, float] | None = None,
+    angles_csv: str | Path | None = None,
+    use_cache: bool = True,
+    save_debug: bool | None = None,
+) -> Catalog:
+    """Reuse catalog.json when the photos and indexing settings have not changed."""
+    settings = settings if settings is not None else load_settings()
+    source = Path(scan_dir)
+    fingerprint = scan_fingerprint(source, settings, sweep=sweep, angles_csv=angles_csv)
+    catalog_path = settings.out_path / "catalog.json"
+    write_debug = settings.save_debug if save_debug is None else save_debug
+    if use_cache and not write_debug and catalog_path.is_file():
+        existing = _read_catalog(catalog_path)
+        if existing is not None and existing.fingerprint == fingerprint:
+            logger.info(
+                "reusing catalog objects=%s path=%s",
+                len(existing.objects),
+                catalog_path,
+            )
+            return existing
+    return build_catalog(
+        source,
+        settings=settings,
+        client_factory=client_factory,
+        detector=detector,
+        sweep=sweep,
+        angles_csv=angles_csv,
+        use_cache=use_cache,
+        save_debug=save_debug,
+    )
+
+
+def scan_fingerprint(
+    source: Path,
+    settings: Settings,
+    *,
+    sweep: tuple[float, float, float] | None,
+    angles_csv: str | Path | None,
+) -> str:
+    """Hash the scan files and the settings that change what the catalog contains."""
+    digest = hashlib.sha256()
+    digest.update(settings.fast_model.encode("utf-8"))
+    digest.update(settings.image_detail.encode("utf-8"))
+    digest.update(repr(tuple(settings.tile_grid)).encode("utf-8"))
+    digest.update(str(settings.api_max_edge).encode("utf-8"))
+    digest.update(str(settings.max_objects_per_image).encode("utf-8"))
+    digest.update(grok_client.index_prompt(settings.max_objects_per_image).encode("utf-8"))
+    digest.update(repr(sweep).encode("utf-8"))
+    if angles_csv is not None:
+        _hash_file(digest, Path(angles_csv))
+    path = Path(source)
+    if path.is_file():
+        _hash_file(digest, path)
+    elif path.is_dir():
+        digest.update(str(path.resolve()).encode("utf-8"))
+        names = [path / "manifest.json"]
+        names.extend(
+            child
+            for child in sorted(path.iterdir())
+            if child.is_file() and child.suffix.lower() in _IMAGE_SUFFIXES
+        )
+        for child in names:
+            if child.is_file():
+                _hash_file(digest, child)
+    return digest.hexdigest()
+
+
+def _hash_file(digest, path: Path) -> None:
+    if not path.is_file():
+        return
+    stat = path.stat()
+    digest.update(path.name.encode("utf-8"))
+    digest.update(str(stat.st_size).encode("utf-8"))
+    digest.update(str(stat.st_mtime_ns).encode("utf-8"))
+
+
+def _read_catalog(path: Path) -> Catalog | None:
+    try:
+        return Catalog.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError, ValueError) as exc:
+        logger.warning("catalog %s could not be reused: %s", path, redact(str(exc)))
+        return None
+
+
 def _index_tiles(tiles, settings, *, client_factory, detector, use_cache: bool) -> list[Detection]:
     if not tiles:
         return []
+    workers = min(settings.max_concurrency, len(tiles))
+    detections: list[Detection] = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [
+            pool.submit(_safe_index_tile, tile, settings, client_factory, detector, use_cache)
+            for tile in tiles
+        ]
+        for future in futures:
+            detections.extend(future.result())
+    return detections
 
-    async def _gather() -> list[list[Detection]]:
-        limit = asyncio.Semaphore(settings.max_concurrency)
 
-        async def one(tile: Tile) -> list[Detection]:
-            async with limit:
-                try:
-                    return await asyncio.to_thread(
-                        _index_tile,
-                        tile,
-                        settings,
-                        client_factory,
-                        detector,
-                        use_cache,
-                    )
-                except GrokCallError as exc:
-                    logger.warning(
-                        "skipping tile %s offset=%s,%s error=%s",
-                        tile.frame.source_file,
-                        tile.offset_x,
-                        tile.offset_y,
-                        redact(str(exc)),
-                    )
-                    return []
-
-        return await asyncio.gather(*(one(tile) for tile in tiles))
-
-    groups = asyncio.run(_gather())
-    return [detection for group in groups for detection in group]
+def _safe_index_tile(tile: Tile, settings, client_factory, detector, use_cache: bool) -> list[Detection]:
+    try:
+        return _index_tile(tile, settings, client_factory, detector, use_cache)
+    except GrokCallError as exc:
+        logger.warning(
+            "skipping tile %s offset=%s,%s error=%s",
+            tile.frame.source_file,
+            tile.offset_x,
+            tile.offset_y,
+            redact(str(exc)),
+        )
+        return []
 
 
 def _index_tile(tile: Tile, settings, client_factory, detector, use_cache: bool) -> list[Detection]:
-    encoded = encode_png(tile.image)
+    encoded = encode_jpeg(tile.image)
     parsed, _cache = grok_client.parse_image_bytes(
         encoded,
-        "image/png",
+        "image/jpeg",
         settings,
-        prompt=grok_client.INDEX_PROMPT,
+        prompt=grok_client.index_prompt(settings.max_objects_per_image),
         response_model=IndexResponse,
         model=settings.fast_model,
         client_factory=client_factory,
         use_cache=use_cache,
     )
     frame = tile.frame
+    ranked = sorted(parsed.objects, key=lambda obj: _norm_area(obj.box), reverse=True)
     detections: list[Detection] = []
-    for obj in parsed.objects:
+    for obj in ranked[: settings.max_objects_per_image]:
         grok_tile = list(norm_box_to_pixels(obj.box, tile.width, tile.height))
-        grok_full = map_norm_box_to_frame(
-            obj.box,
-            tile.width,
-            tile.height,
-            tile.offset_x,
-            tile.offset_y,
-            frame.width,
-            frame.height,
-        )
+        grok_full = _to_camera_box(grok_tile, tile.offset_x, tile.offset_y, tile)
         try:
             hits = detector.detect(tile.image, obj.label)
-        except Exception as exc:  # a broken detector must not drop the Grok box
+        except Exception as exc:  # a broken detector must not drop the vision box
             logger.warning("detector failed on %s: %s", frame.source_file, redact(str(exc)))
             hits = []
         chosen, source, confidence = refine_box(grok_tile, hits, settings.refine_iou)
@@ -197,9 +288,11 @@ def _index_tile(tile: Tile, settings, client_factory, detector, use_cache: bool)
             confidence = GROK_ONLY_CONFIDENCE
             full = grok_full
         else:
-            full = shift_box(chosen, tile.offset_x, tile.offset_y, frame.width, frame.height)
+            full = _to_camera_box(list(chosen), tile.offset_x, tile.offset_y, tile)
+        camera_w = frame.camera_width
+        camera_h = frame.camera_height
         azimuth, elevation = box_center_angles(
-            full, frame.width, frame.height, frame.pan_deg, frame.tilt_deg, settings
+            full, camera_w, camera_h, frame.pan_deg, frame.tilt_deg, settings
         )
         detections.append(
             Detection(
@@ -217,12 +310,41 @@ def _index_tile(tile: Tile, settings, client_factory, detector, use_cache: bool)
                 tilt_deg=frame.tilt_deg,
                 azimuth_deg=azimuth,
                 elevation_deg=elevation,
-                image_width=frame.width,
-                image_height=frame.height,
+                image_width=camera_w,
+                image_height=camera_h,
                 timestamp=frame.timestamp,
             )
         )
     return detections
+
+
+def _norm_area(box: list[float]) -> float:
+    return max(0.0, float(box[2]) - float(box[0])) * max(0.0, float(box[3]) - float(box[1]))
+
+
+def _to_camera_box(box_px: list[int], offset_x: int, offset_y: int, tile: Tile) -> list[int]:
+    """Map a box on the working tile onto the original photo."""
+    frame = tile.frame
+    src_w = max(1, frame.width)
+    src_h = max(1, frame.height)
+    dst_w = frame.camera_width
+    dst_h = frame.camera_height
+    scale_x = dst_w / src_w
+    scale_y = dst_h / src_h
+    x1, y1, x2, y2 = box_px
+    scaled = [
+        int(round(x1 * scale_x)),
+        int(round(y1 * scale_y)),
+        int(round(x2 * scale_x)),
+        int(round(y2 * scale_y)),
+    ]
+    return shift_box(
+        scaled,
+        int(round(offset_x * scale_x)),
+        int(round(offset_y * scale_y)),
+        dst_w,
+        dst_h,
+    )
 
 
 def _should_merge(left: Detection, right: Detection, settings: Settings) -> bool:
@@ -327,13 +449,13 @@ def _log_resolution_once(frames: list[LoadedFrame], settings: Settings) -> None:
     if not frames or None not in (settings.fx, settings.fy, settings.cx, settings.cy):
         return
     frame = frames[0]
-    if frame.width == settings.image_width and frame.height == settings.image_height:
+    if frame.camera_width == settings.image_width and frame.camera_height == settings.image_height:
         return
     logger.info(
         "frame %s is %sx%s; config placeholders are %sx%s. FOV is applied to the actual frame.",
         frame.source_file,
-        frame.width,
-        frame.height,
+        frame.camera_width,
+        frame.camera_height,
         settings.image_width,
         settings.image_height,
     )
