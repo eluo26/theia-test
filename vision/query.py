@@ -17,6 +17,7 @@ from vision.config import REPO_ROOT, Settings, load_settings, require_api_key
 from vision.detector import tighter_agreeing_box
 from vision.geometry import box_center_angles
 from vision.grok_client import GrokCallError, redact
+from vision.matching import match_text, same_label_family, side_view_core, token_ratio
 from vision.preprocess import encode_png
 from vision.references import reference_note
 from vision.schemas import (
@@ -30,6 +31,18 @@ from vision.schemas import (
 )
 
 logger = logging.getLogger("vision.query")
+
+# Spatial questions name a relation, not one catalog label. Examples from the prompt.
+_RELATIONAL_PHRASES = (
+    "next to",
+    "left of",
+    "right of",
+    "beside",
+    "in front of",
+    "behind the",
+    "near the",
+    "the thing",
+)
 
 QUERY_PROMPT = """You are the query module for a tabletop laser turret.
 The user is looking for an object. The catalog lists what the camera saw.
@@ -79,15 +92,24 @@ def locate(
     if not catalog.objects:
         return _empty("not_found", 0.0, "The catalog has no objects.")
 
-    decision, _cache = grok_client.parse_text(
-        QUERY_PROMPT.format(catalog=catalog_text(catalog), query=query),
-        settings,
-        response_model=QueryDecision,
-        model=settings.active_query_model,
-        client_factory=client_factory,
-        use_cache=use_cache,
-    )
-    candidates = _known_candidates(decision.candidates, catalog)[:3]
+    direct = _direct_catalog_decision(query, catalog, settings)
+    if direct is not None:
+        decision = direct
+        candidates = _known_candidates(decision.candidates, catalog)[:3]
+        check_crop = False
+        logger.info("catalog label match; skipping the text model")
+    else:
+        decision, _cache = grok_client.parse_text(
+            QUERY_PROMPT.format(catalog=catalog_text(catalog), query=query),
+            settings,
+            response_model=QueryDecision,
+            model=settings.active_query_model,
+            client_factory=client_factory,
+            use_cache=use_cache,
+        )
+        candidates = _known_candidates(decision.candidates, catalog)[:3]
+        decision = _collapse_same_kind(decision, candidates, catalog, settings)
+        check_crop = settings.verify_match
     chosen = _resolve(decision, catalog)
     if decision.status == "not_found" or chosen is None:
         return QueryResult(
@@ -112,7 +134,7 @@ def locate(
     reason = decision.reason
     box_source = chosen.box_source
     refined = None
-    if settings.verify_match:
+    if check_crop:
         chosen_detector = detector_lib.resolve_detector(settings, detector)
         try:
             refined = _verify_crop(
@@ -277,6 +299,131 @@ def _frame_path(catalog: Catalog, obj: CatalogObject) -> Path | None:
 
 def catalog_object_map(catalog: Catalog) -> dict[str, CatalogObject]:
     return {obj.object_id: obj for obj in catalog.objects}
+
+
+def _collapse_same_kind(
+    decision: QueryDecision,
+    candidates: list,
+    catalog: Catalog,
+    settings: Settings,
+) -> QueryDecision:
+    """Aim at the best view when one kind of object was recognized more than once.
+
+    Two photos of a laptop used to stay ambiguous, so the laser would not point.
+    Same labels (the configured rapidfuzz threshold) collapse to the
+    highest-confidence candidate. A left view and a right view of one object
+    count as the same label. Different objects stay ambiguous.
+    """
+    if decision.status != "ambiguous" or not _same_kind(candidates, catalog, settings.label_sim):
+        return decision
+    by_id = catalog_object_map(catalog)
+    best = max(candidates, key=lambda item: (item.confidence, by_id[item.object_id].confidence))
+    note = "Same kind of object in more than one photo; aiming at the highest-confidence view."
+    reason = decision.reason if note in decision.reason else f"{decision.reason} {note}".strip()
+    logger.info("collapsed %s same-kind candidates to %s", len(candidates), best.object_id)
+    return decision.model_copy(
+        update={
+            "status": "found",
+            "object_id": best.object_id,
+            "confidence": best.confidence,
+            "reason": reason,
+        }
+    )
+
+
+def _same_kind(candidates, catalog: Catalog, label_sim: float) -> bool:
+    if len(candidates) < 2:
+        return False
+    by_id = catalog_object_map(catalog)
+    if len({item.object_id for item in candidates}) == 1:
+        return True
+    labels = [by_id[item.object_id].label for item in candidates]
+    for index, left in enumerate(labels):
+        for right in labels[index + 1 :]:
+            if not same_label_family(left, right, label_sim):
+                return False
+    return True
+
+
+def _is_relational(query: str) -> bool:
+    text = match_text(query).casefold()
+    return any(phrase in text for phrase in _RELATIONAL_PHRASES)
+
+
+def _name_score(query: str, name: str) -> float:
+    return token_ratio(match_text(query), match_text(name))
+
+
+def _object_names(obj: CatalogObject) -> list[str]:
+    names = [obj.label]
+    if obj.drug_name:
+        names.append(obj.drug_name)
+    core = side_view_core(obj.label)
+    if core.casefold() != obj.label.casefold():
+        names.append(core)
+    return names
+
+
+def _object_score(query: str, obj: CatalogObject) -> float:
+    return max(_name_score(query, name) for name in _object_names(obj))
+
+
+def _objects_same_family(objects: list[CatalogObject], label_sim: float) -> bool:
+    labels = [obj.label for obj in objects]
+    for index, left in enumerate(labels):
+        for right in labels[index + 1 :]:
+            if not same_label_family(left, right, label_sim):
+                return False
+    return True
+
+
+def _direct_catalog_decision(
+    query: str,
+    catalog: Catalog,
+    settings: Settings,
+) -> QueryDecision | None:
+    """Answer from catalog labels when the question names them.
+
+    Relational questions and category questions that do not literally match a
+    label or drug name return None so the text model still runs.
+    """
+    if _is_relational(query):
+        return None
+    hits = [obj for obj in catalog.objects if _object_score(query, obj) >= settings.label_sim]
+    if not hits:
+        return None
+    ranked = sorted(hits, key=lambda obj: obj.confidence, reverse=True)
+    candidates = [
+        Candidate(
+            object_id=obj.object_id,
+            label=obj.label,
+            confidence=obj.confidence,
+            reason="The question names this catalog label.",
+        )
+        for obj in ranked[:3]
+    ]
+    if not _objects_same_family(hits, settings.label_sim):
+        return QueryDecision(
+            status="ambiguous",
+            object_id=None,
+            confidence=ranked[0].confidence,
+            reason="More than one different catalog object matches the question.",
+            candidates=candidates,
+        )
+    best = ranked[0]
+    reason = "Matched the catalog label."
+    if len(hits) > 1:
+        reason = (
+            f"{reason} Same kind of object in more than one photo; "
+            "aiming at the highest-confidence view."
+        )
+    return QueryDecision(
+        status="found",
+        object_id=best.object_id,
+        confidence=best.confidence,
+        reason=reason,
+        candidates=candidates,
+    )
 
 
 def _resolve(decision: QueryDecision, catalog: Catalog) -> CatalogObject | None:

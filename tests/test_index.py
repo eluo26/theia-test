@@ -275,3 +275,63 @@ def test_second_query_reuses_the_catalog(tmp_path, monkeypatch):
     assert calls["n"] == 1
     assert second.objects[0].object_id == first.objects[0].object_id
     assert second.fingerprint == first.fingerprint
+
+
+def test_changing_one_photo_does_not_reupload_the_others(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", _api_key())
+    for name in ("pan000_tilt000.png", "pan030_tilt000.png", "pan060_tilt000.png"):
+        Image.new("RGB", (80, 40), (255, 255, 255)).save(tmp_path / name)
+    settings = _settings(tmp_path)
+    calls = []
+    encodes = {"n": 0}
+
+    def fake_image(image_bytes, mime, settings, *, prompt, response_model, model, **kwargs):
+        calls.append(image_bytes)
+        pixel = Image.open(__import__("io").BytesIO(image_bytes)).convert("RGB").getpixel((0, 0))
+        label = "red cup" if pixel[0] > 200 and pixel[1] < 40 else "green mug"
+        return (
+            IndexResponse.model_validate(
+                {
+                    "objects": [
+                        {
+                            "label": label,
+                            "description": label,
+                            "box": [100, 100, 400, 800],
+                            "count": 1,
+                            "drug_name": None,
+                            "expiry_text": None,
+                        }
+                    ]
+                }
+            ),
+            "miss",
+        )
+
+    def counting_encode(image, **kwargs):
+        encodes["n"] += 1
+        from vision.preprocess import encode_jpeg as real_encode
+
+        return real_encode(image, **kwargs)
+
+    monkeypatch.setattr("vision.grok_client.parse_image_bytes", fake_image)
+    monkeypatch.setattr("vision.index.encode_jpeg", counting_encode)
+    first = catalog_for_query(tmp_path, settings=settings, detector=NullDetector())
+    assert len(calls) == 3
+    assert encodes["n"] == 3
+    assert len(first.frames) == 3
+    assert sorted(obj.label for obj in first.objects) == ["green mug", "green mug", "green mug"]
+
+    again = catalog_for_query(tmp_path, settings=settings, detector=NullDetector())
+    assert len(calls) == 3
+    assert encodes["n"] == 3
+    assert again.fingerprint == first.fingerprint
+
+    Image.new("RGB", (80, 40), (255, 0, 0)).save(tmp_path / "pan030_tilt000.png")
+    updated = catalog_for_query(tmp_path, settings=settings, detector=NullDetector())
+    assert len(calls) == 4
+    assert encodes["n"] == 4
+    assert sorted(obj.label for obj in updated.objects) == ["green mug", "green mug", "red cup"]
+    remembered = {frame.source_file: frame for frame in updated.frames}
+    assert remembered["pan030_tilt000.png"].fingerprint != remembered["pan000_tilt000.png"].fingerprint
+    assert any(item.label == "red cup" for item in remembered["pan030_tilt000.png"].detections)
+    assert all(item.label == "green mug" for item in remembered["pan000_tilt000.png"].detections)
